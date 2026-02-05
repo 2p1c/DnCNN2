@@ -115,3 +115,30 @@ uv.lock
 *.log
 *.tmp
 *.temp
+# General
+.DS_Store
+.env
+.env.local
+
+# Frontend
+node_modules/
+.next/
+build/
+dist/
+.npm/
+
+# Python / ML
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+*.pkl
+*.pth
+*.pt
+wandb/
+
+# Editor
+.vscode/
+.idea/
