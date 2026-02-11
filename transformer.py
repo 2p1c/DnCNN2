@@ -173,6 +173,38 @@ def interpolate_spatial(
     return grid_large
 
 
+def truncate_signals(
+    time_vector: np.ndarray,
+    signal_data: np.ndarray,
+    target_length: int = 1000
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Truncate signals to target length.
+    
+    If signals are longer than target_length, keep the first target_length points.
+    If signals are already at or shorter than target_length, return as-is.
+    
+    Args:
+        time_vector: Time vector of shape (signal_length,)
+        signal_data: Signal data of shape (n_points, signal_length)
+        target_length: Target number of time points (default: 1000)
+        
+    Returns:
+        Tuple of (truncated_time, truncated_signals)
+    """
+    current_length = signal_data.shape[1]
+    
+    if current_length <= target_length:
+        print(f"[INFO] Signal length ({current_length}) <= target ({target_length}), no truncation needed.")
+        return time_vector, signal_data
+    
+    print(f"[INFO] Truncating signals: {current_length} -> {target_length} points")
+    truncated_time = time_vector[:target_length]
+    truncated_signals = signal_data[:, :target_length]
+    
+    return truncated_time, truncated_signals
+
+
 def normalize_signal(signal: np.ndarray) -> np.ndarray:
     """
     Normalize signal to [-1, 1] range.
@@ -429,7 +461,8 @@ def transform_data(
     train_ratio: float = 0.8,
     interpolation_method: str = 'cubic',
     normalize: bool = True,
-    seed: int = 42
+    seed: int = 42,
+    target_signal_length: int = 1000
 ) -> None:
     """
     Main transformation pipeline.
@@ -445,6 +478,7 @@ def transform_data(
         interpolation_method: Spatial interpolation method
         normalize: Whether to normalize signals
         seed: Random seed
+        target_signal_length: Target signal length, truncate if longer
     """
     np.random.seed(seed)
     
@@ -454,8 +488,15 @@ def transform_data(
     
     # Load data
     print("\n[Step 1] Loading .mat files...")
-    _, noisy_data = load_mat_file(noisy_path)
-    _, clean_data = load_mat_file(clean_path)
+    noisy_time, noisy_data = load_mat_file(noisy_path)
+    clean_time, clean_data = load_mat_file(clean_path)
+    print(f"[DEBUG] After load_mat_file: noisy min={noisy_data.min():.4g}, max={noisy_data.max():.4g}, mean={noisy_data.mean():.4g}")
+    
+    # Truncate signals to target length if needed
+    print(f"\n[Step 1.5] Checking signal length (target: {target_signal_length})...")
+    noisy_time, noisy_data = truncate_signals(noisy_time, noisy_data, target_signal_length)
+    clean_time, clean_data = truncate_signals(clean_time, clean_data, target_signal_length)
+    print(f"[DEBUG] After truncate_signals: noisy min={noisy_data.min():.4g}, max={noisy_data.max():.4g}, mean={noisy_data.mean():.4g}")
     
     # Verify dimensions
     noisy_n_cols, noisy_n_rows = noisy_grid_size
@@ -480,6 +521,7 @@ def transform_data(
     # Reshape to 3D grids
     noisy_grid = reshape_to_grid(noisy_data, noisy_n_cols, noisy_n_rows)
     clean_grid = reshape_to_grid(clean_data, clean_n_cols, clean_n_rows)
+    print(f"[DEBUG] After reshape_to_grid: noisy min={noisy_grid.min():.4g}, max={noisy_grid.max():.4g}, mean={noisy_grid.mean():.4g}")
     
     print(f"\n[Step 3] Spatial interpolation...")
     # Interpolate noisy from 21x21 to 41x41
@@ -489,11 +531,13 @@ def transform_data(
         clean_n_rows,
         method=interpolation_method
     )
+    print(f"[DEBUG] After interpolate_spatial: noisy min={noisy_grid_interp.min():.4g}, max={noisy_grid_interp.max():.4g}, mean={noisy_grid_interp.mean():.4g}")
     
     print(f"\n[Step 4] Flattening grids...")
     # Flatten back to 2D
     noisy_signals = flatten_grid(noisy_grid_interp)
     clean_signals = flatten_grid(clean_grid)
+    print(f"[DEBUG] After flatten_grid: noisy min={noisy_signals.min():.4g}, max={noisy_signals.max():.4g}, mean={noisy_signals.mean():.4g}")
     
     print(f"  Noisy signals shape: {noisy_signals.shape}")
     print(f"  Clean signals shape: {clean_signals.shape}")
@@ -505,6 +549,7 @@ def transform_data(
         clean_signals,
         augment_factor=augment_factor
     )
+    print(f"[DEBUG] After create_augmented_dataset: noisy min={noisy_aug.min():.4g}, max={noisy_aug.max():.4g}, mean={noisy_aug.mean():.4g}")
     
     print(f"\n[Step 6] Saving dataset...")
     # Save to file
@@ -556,6 +601,8 @@ def main():
                         help='Spatial interpolation method')
     parser.add_argument('--no_normalize', action='store_true',
                         help='Disable signal normalization')
+    parser.add_argument('--signal_length', type=int, default=1000,
+                        help='Target signal length (truncate if longer)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
     
@@ -571,7 +618,8 @@ def main():
         train_ratio=args.train_ratio,
         interpolation_method=args.interp_method,
         normalize=not args.no_normalize,
-        seed=args.seed
+        seed=args.seed,
+        target_signal_length=args.signal_length
     )
 
 

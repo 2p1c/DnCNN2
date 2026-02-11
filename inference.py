@@ -37,7 +37,8 @@ from transformer import (
     reshape_to_grid, 
     flatten_grid,
     interpolate_spatial,
-    normalize_signal
+    normalize_signal,
+    truncate_signals
 )
 
 
@@ -101,7 +102,8 @@ def preprocess_mat_data(
     grid_rows: int = 21,
     target_cols: int = 41,
     target_rows: int = 41,
-    interpolation_method: str = 'cubic'
+    interpolation_method: str = 'cubic',
+    target_signal_length: int = 1000
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """
     Preprocess .mat file data for inference.
@@ -116,6 +118,7 @@ def preprocess_mat_data(
         target_cols: Target columns after interpolation
         target_rows: Target rows after interpolation
         interpolation_method: Interpolation method ('linear', 'cubic')
+        target_signal_length: Target signal length (truncate if longer)
         
     Returns:
         Tuple of:
@@ -125,6 +128,9 @@ def preprocess_mat_data(
     """
     print(f"\n[Step 1] Loading .mat file: {mat_path}")
     time_vector, signal_data = load_mat_file(mat_path)
+    
+    # Truncate signals if longer than target length
+    time_vector, signal_data = truncate_signals(time_vector, signal_data, target_signal_length)
     
     # Store original data info for reconstruction
     metadata = {
@@ -365,7 +371,8 @@ def run_inference(
     target_rows: int = 41,
     interpolation_method: str = 'cubic',
     batch_size: int = 64,
-    save_original_size: bool = True
+    save_original_size: bool = True,
+    target_signal_length: int = 1000
 ) -> str:
     """
     Main inference pipeline.
@@ -382,6 +389,7 @@ def run_inference(
         interpolation_method: Spatial interpolation method
         batch_size: Inference batch size
         save_original_size: Whether to also save at original grid size
+        target_signal_length: Target signal length (truncate if longer)
         
     Returns:
         Path to saved output file
@@ -408,7 +416,8 @@ def run_inference(
         grid_rows=grid_rows,
         target_cols=target_cols,
         target_rows=target_rows,
-        interpolation_method=interpolation_method
+        interpolation_method=interpolation_method,
+        target_signal_length=target_signal_length
     )
     
     # Run denoising
@@ -502,6 +511,8 @@ def main():
                         help='Inference batch size')
     parser.add_argument('--no_original_size', action='store_true',
                         help='Do not save results at original grid size')
+    parser.add_argument('--signal_length', type=int, default=1000,
+                        help='Target signal length (truncate if longer)')
     
     args = parser.parse_args()
     
@@ -516,7 +527,8 @@ def main():
         target_rows=args.target_rows,
         interpolation_method=args.interp_method,
         batch_size=args.batch_size,
-        save_original_size=not args.no_original_size
+        save_original_size=not args.no_original_size,
+        target_signal_length=args.signal_length
     )
 
 
