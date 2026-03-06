@@ -96,14 +96,97 @@ python train.py --mode file --data_path ./data --model deep --epochs 150 --dropo
 
 ---
 
-## 输出文件
+## PINN 训练 (train_pinn.py)
 
-| 文件                         | 说明                 |
-| ---------------------------- | -------------------- |
-| `fig_pre_train_samples.png`  | 训练前样本可视化     |
-| `fig_results.png`            | 去噪效果对比图       |
-| `fig_training_curves.png`    | 训练曲线 (Loss/PSNR) |
-| `checkpoints/best_model.pth` | 最佳模型权重         |
+Physics-Informed Neural Network (PINN) 变体，将一维声波方程约束嵌入损失函数：
+
+```
+L_total = L_data + λ · L_physics
+L_data    = MSE(denoised, clean)
+L_physics = mean(|∂²u/∂t²|²)   — 波动方程残差
+```
+
+### 训练参数
+
+| 参数               | 默认值      | 说明                                       |
+| ------------------ | ----------- | ------------------------------------------ |
+| `--mode`           | `synthetic` | 数据模式：`synthetic`(合成) / `file`(文件) |
+| `--data_path`      | `data`      | 数据目录路径 (file模式)                    |
+| `--epochs`         | `50`        | 训练轮数                                   |
+| `--batch_size`     | `32`        | 批次大小                                   |
+| `--lr`             | `0.001`     | 学习率                                     |
+| `--dropout`        | `0.1`       | Dropout率                                  |
+| `--patience`       | `50`        | 早停耐心值                                 |
+| `--min_epochs`     | `30`        | 早停前最小训练轮数                         |
+| `--augment`        | `False`     | 启用数据增强                               |
+| `--num_train`      | `5000`      | 合成训练样本数                             |
+| `--num_val`        | `1000`      | 合成验证样本数                             |
+| `--seed`           | `42`        | 随机种子                                   |
+| `--physics_weight` | `0.001`     | 物理损失权重 λ (越大物理约束越强)          |
+| `--wave_speed`     | `5900.0`    | 介质中声速 (m/s)，钢材默认 5900            |
+
+### 快速训练命令
+
+#### 1. 合成数据 - 快速测试
+
+```bash
+python train_pinn.py --epochs 30
+```
+
+#### 2. 合成数据 - 调节物理约束强度
+
+```bash
+python train_pinn.py --epochs 100 --physics_weight 0.01
+```
+
+#### 3. 实验数据 - 基础训练
+
+```bash
+python train_pinn.py --mode file --data_path ./data --epochs 100
+```
+
+#### 4. 实验数据 - 强物理约束
+
+```bash
+python train_pinn.py --mode file --data_path ./data --epochs 100 --physics_weight 0.01 --dropout 0.2
+```
+
+#### 5. 自定义声速 (铝材)
+
+```bash
+python train_pinn.py --mode file --data_path ./data --wave_speed 6320.0
+```
+
+### PINN 输出文件
+
+| 文件                              | 说明                              |
+| --------------------------------- | --------------------------------- |
+| `fig_pinn_pre_train_samples.png`  | 训练前样本可视化                  |
+| `fig_pinn_results.png`            | 去噪效果对比图                    |
+| `fig_pinn_training_curves.png`    | 训练曲线 (Total/Data/Physics/PSNR)|
+| `fig_pinn_acoustic_validation.png`| 声学特征验证报告                  |
+| `checkpoints/best_pinn_model.pth` | 最佳 PINN 模型权重               |
+
+### PINN 调参建议
+
+| 问题                       | 解决方案                                    |
+| -------------------------- | ------------------------------------------- |
+| 物理约束过强 (PSNR低)      | 降低 `--physics_weight` 到 0.0001           |
+| 物理约束无效 (physics_loss不降) | 提高 `--physics_weight` 到 0.01         |
+| 输出过于平滑               | 降低 `--physics_weight`，减少正则化         |
+| 想用不同介质               | 修改 `--wave_speed`：钢5900，铝6320，水1480 |
+
+---
+
+## 输出文件 (train.py)
+
+| 文件                              | 说明                 |
+| --------------------------------- | -------------------- |
+| `fig_pre_train_samples.png`       | 训练前样本可视化     |
+| `fig_results.png`                 | 去噪效果对比图       |
+| `fig_training_curves.png`         | 训练曲线 (Loss/PSNR) |
+| `fig_acoustic_validation.png`     | 声学特征验证报告     |
+| `checkpoints/best_model.pth`      | 最佳模型权重         |
 
 ---
 
@@ -154,13 +237,16 @@ python inference.py --input data.mat --cols 21 --rows 21 --target_cols 41 --targ
 # 只保存完整分辨率结果
 python inference.py --input data.mat --output results/ --no_original_size
 ```
-
+1
 ### 输出文件
 
-| 文件                                    | 说明                        |
-| --------------------------------------- | --------------------------- |
-| `denoised_YYYYMMDD_HHMMSS_full.mat`     | 插值后的 41×41 网格去噪结果 |
-| `denoised_YYYYMMDD_HHMMSS_original.mat` | 还原到原始 21×21 网格的结果 |
+| 文件                                        | 说明                            |
+| ------------------------------------------- | ------------------------------- |
+| `denoised_YYYYMMDD_HHMMSS_full.mat`         | 插值后的 41×41 网格去噪结果     |
+| `denoised_YYYYMMDD_HHMMSS_original.mat`     | 还原到原始 21×21 网格的结果     |
+| `acoustic_validation_YYYYMMDD_HHMMSS.png`   | 声学特征验证报告 (去噪前 vs 后) |
+
+> **声学特征验证**: 推理时会自动对比去噪前后的声学特征（主频、子频带能量、频谱相干性等），生成 6 面板验证图并在终端打印报告，确认去噪没有丢失关键声学信息。
 
 ### .mat 文件格式
 

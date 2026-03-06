@@ -80,7 +80,6 @@ logs/
 tensorboard_logs/
 
 # Training outputs (figures)
-*.png
 *.jpg
 *.jpeg
 figures/

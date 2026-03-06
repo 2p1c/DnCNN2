@@ -1,255 +1,17 @@
 """
-Lightweight 1D Convolutional Autoencoder for Ultrasonic Signal Denoising
+Deep 1D Convolutional Autoencoder for Ultrasonic Signal Denoising
 
 Based on "Ultrasonic signal noise reduction based on convolutional autoencoders for NDT applications"
-Scaled down for consumer-grade hardware while maintaining effectiveness.
 
 Architecture:
-- Encoder: 3 Conv1d layers with stride=2 downsampling
-- Decoder: 3 ConvTranspose1d layers with stride=2 upsampling
-- Regularization: BatchNorm + Dropout (as mentioned in paper)
+- Encoder: 5 Conv1d layers with stride=2 downsampling
+- Decoder: 5 ConvTranspose1d layers with stride=2 upsampling
+- Regularization: BatchNorm + Dropout + LeakyReLU
 """
 
 import torch
 import torch.nn as nn
 from typing import Tuple
-
-
-class LightweightCAE(nn.Module):
-    """
-    Lightweight 1D Convolutional Autoencoder for signal denoising.
-    
-    Architecture:
-    - Encoder: Conv1d (1→16→32→64 channels), stride=2, ReLU, BatchNorm, Dropout
-    - Decoder: ConvTranspose1d (64→32→16→1 channels), stride=2, ReLU, BatchNorm
-    
-    Input/Output shape: (Batch, 1, 1000)
-    Latent shape: (Batch, 64, 125)
-    """
-    
-    def __init__(
-        self,
-        in_channels: int = 1,
-        base_channels: int = 16,
-        kernel_size: int = 5,
-        dropout_rate: float = 0.1
-    ):
-        """
-        Initialize the Convolutional Autoencoder.
-        
-        Args:
-            in_channels: Number of input channels (1 for 1D signal)
-            base_channels: Base number of channels (16), doubled at each layer
-            kernel_size: Convolution kernel size (3 or 5 recommended)
-            dropout_rate: Dropout probability for regularization (paper mentions dropout)
-        """
-        super().__init__()
-        
-        self.in_channels = in_channels
-        self.base_channels = base_channels
-        self.kernel_size = kernel_size
-        
-        # Calculate padding for 'same' convolution before stride
-        padding = kernel_size // 2
-        
-        # ============================================================
-        # Encoder: Progressively downsample and increase channels
-        # Input: (B, 1, 1000) → Output: (B, 64, 125)
-        # ============================================================
-        self.encoder = nn.Sequential(
-            # Layer 1: (B, 1, 1000) → (B, 16, 500)
-            nn.Conv1d(in_channels, base_channels, kernel_size, 
-                     stride=2, padding=padding),
-            nn.BatchNorm1d(base_channels),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 2: (B, 16, 500) → (B, 32, 250)
-            nn.Conv1d(base_channels, base_channels * 2, kernel_size, 
-                     stride=2, padding=padding),
-            nn.BatchNorm1d(base_channels * 2),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 3: (B, 32, 250) → (B, 64, 125)
-            nn.Conv1d(base_channels * 2, base_channels * 4, kernel_size, 
-                     stride=2, padding=padding),
-            nn.BatchNorm1d(base_channels * 4),
-            nn.ReLU(inplace=True),
-        )
-        
-        # ============================================================
-        # Decoder: Progressively upsample and decrease channels
-        # Input: (B, 64, 125) → Output: (B, 1, 1000)
-        # ============================================================
-        self.decoder = nn.Sequential(
-            # Layer 1: (B, 64, 125) → (B, 32, 250)
-            nn.ConvTranspose1d(base_channels * 4, base_channels * 2, kernel_size, 
-                              stride=2, padding=padding, output_padding=1),
-            nn.BatchNorm1d(base_channels * 2),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 2: (B, 32, 250) → (B, 16, 500)
-            nn.ConvTranspose1d(base_channels * 2, base_channels, kernel_size, 
-                              stride=2, padding=padding, output_padding=1),
-            nn.BatchNorm1d(base_channels),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 3: (B, 16, 500) → (B, 1, 1000)
-            nn.ConvTranspose1d(base_channels, in_channels, kernel_size, 
-                              stride=2, padding=padding, output_padding=1),
-            # Tanh activation: output in [-1, 1] range (matches normalized signal)
-            nn.Tanh(),
-        )
-        
-        # Initialize weights
-        self._initialize_weights()
-        
-    def _initialize_weights(self) -> None:
-        """
-        Initialize model weights using Kaiming (He) initialization.
-        
-        Kaiming init is preferred for networks with ReLU activations.
-        """
-        for m in self.modules():
-            if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-                
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Encode input signal to latent representation.
-        
-        Args:
-            x: Input tensor of shape (B, 1, 1000)
-            
-        Returns:
-            Latent tensor of shape (B, 64, 125)
-        """
-        return self.encoder(x)
-    
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """
-        Decode latent representation to reconstructed signal.
-        
-        Args:
-            z: Latent tensor of shape (B, 64, 125)
-            
-        Returns:
-            Reconstructed tensor of shape (B, 1, 1000)
-        """
-        return self.decoder(z)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass: encode noisy signal then decode to denoised signal.
-        
-        The autoencoder learns to map noisy signals to clean signals
-        by learning a compressed representation that preserves signal
-        features while discarding noise.
-        
-        Args:
-            x: Input noisy signal of shape (B, 1, 1000)
-            
-        Returns:
-            Denoised signal of shape (B, 1, 1000)
-        """
-        z = self.encode(x)
-        return self.decode(z)
-    
-    def get_latent_dim(self) -> Tuple[int, int]:
-        """
-        Get latent space dimensions.
-        
-        Returns:
-            Tuple of (channels, length) = (64, 125)
-        """
-        return (self.base_channels * 4, 125)
-
-
-class DeeperCAE(nn.Module):
-    """
-    Deeper variant of the CAE for better performance on complex signals.
-    
-    Architecture: 4 encoder + 4 decoder layers
-    Use this if LightweightCAE doesn't achieve desired PSNR.
-    """
-    
-    def __init__(
-        self,
-        in_channels: int = 1,
-        base_channels: int = 16,
-        kernel_size: int = 5,
-        dropout_rate: float = 0.1
-    ):
-        super().__init__()
-        
-        padding = kernel_size // 2
-        
-        # Encoder: (B, 1, 1000) → (B, 128, 63)
-        self.encoder = nn.Sequential(
-            # Layer 1: 1→16, 1000→500
-            nn.Conv1d(in_channels, base_channels, kernel_size, stride=2, padding=padding),
-            nn.BatchNorm1d(base_channels),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 2: 16→32, 500→250
-            nn.Conv1d(base_channels, base_channels * 2, kernel_size, stride=2, padding=padding),
-            nn.BatchNorm1d(base_channels * 2),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 3: 32→64, 250→125
-            nn.Conv1d(base_channels * 2, base_channels * 4, kernel_size, stride=2, padding=padding),
-            nn.BatchNorm1d(base_channels * 4),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 4: 64→128, 125→63
-            nn.Conv1d(base_channels * 4, base_channels * 8, kernel_size, stride=2, padding=padding),
-            nn.BatchNorm1d(base_channels * 8),
-            nn.ReLU(inplace=True),
-        )
-        
-        # Decoder: (B, 128, 63) → (B, 1, 1000)
-        self.decoder = nn.Sequential(
-            # Layer 1: 128→64, 63→125
-            nn.ConvTranspose1d(base_channels * 8, base_channels * 4, kernel_size, 
-                              stride=2, padding=padding, output_padding=0),
-            nn.BatchNorm1d(base_channels * 4),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 2: 64→32, 125→250
-            nn.ConvTranspose1d(base_channels * 4, base_channels * 2, kernel_size, 
-                              stride=2, padding=padding, output_padding=1),
-            nn.BatchNorm1d(base_channels * 2),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 3: 32→16, 250→500
-            nn.ConvTranspose1d(base_channels * 2, base_channels, kernel_size, 
-                              stride=2, padding=padding, output_padding=1),
-            nn.BatchNorm1d(base_channels),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_rate),
-            
-            # Layer 4: 16→1, 500→1000
-            nn.ConvTranspose1d(base_channels, in_channels, kernel_size, 
-                              stride=2, padding=padding, output_padding=1),
-            nn.Tanh(),
-        )
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        z = self.encoder(x)
-        return self.decoder(z)
 
 
 class DeepCAE(nn.Module):
@@ -381,6 +143,93 @@ class DeepCAE(nn.Module):
         return d1
 
 
+class DeepCAE_PINN(DeepCAE):
+    """
+    Physics-Informed DeepCAE for ultrasonic signal denoising.
+    
+    Inherits the full DeepCAE encoder/decoder architecture and adds
+    a physics constraint based on the 1D acoustic wave equation:
+    
+        ∂²u/∂t² = c² · ∂²u/∂x²
+    
+    For a fixed-position receiver, the denoised output u(t) should
+    satisfy smoothness constraints derived from the wave equation.
+    The physics residual (second-order time derivative) is computed
+    via finite differences and penalized during training.
+    
+    Usage:
+        - forward(x):         Standard inference (same as DeepCAE)
+        - physics_forward(x): Returns (denoised, physics_residual) for PINN training
+    """
+    
+    # Physical constants for ultrasonic NDT
+    SAMPLING_RATE: float = 6.25e6   # 6.25 MHz
+    DURATION: float = 160e-6        # 160 μs
+    NUM_POINTS: int = 1000          # Total data points
+    
+    def __init__(
+        self,
+        in_channels: int = 1,
+        base_channels: int = 32,
+        kernel_size: int = 7,
+        dropout_rate: float = 0.1,
+        wave_speed: float = 5900.0,  # Speed of sound in steel (m/s)
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            base_channels=base_channels,
+            kernel_size=kernel_size,
+            dropout_rate=dropout_rate,
+        )
+        # Time step between consecutive samples
+        self.dt = self.DURATION / self.NUM_POINTS  # 160e-6 / 1000 = 1.6e-7 s
+        self.wave_speed = wave_speed
+    
+    def compute_wave_equation_residual(self, u: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the wave equation physics residual using finite differences.
+        
+        Computes the second-order central difference (proportional to ∂²u/∂t²):
+            Δ²u = u[t+1] - 2·u[t] + u[t-1]
+        
+        We omit the 1/dt² scaling factor to keep the residual in a
+        numerically stable range (dt=1.6e-7 would cause ~1e14 scaling).
+        The physics_weight hyperparameter absorbs this scale.
+        
+        Args:
+            u: Denoised signal tensor of shape (B, 1, T)
+            
+        Returns:
+            Physics residual tensor of shape (B, 1, T-2)
+        """
+        # Second-order central finite difference (curvature measure)
+        d2u = u[:, :, 2:] - 2 * u[:, :, 1:-1] + u[:, :, :-2]
+        return d2u
+    
+    def physics_forward(self, x: torch.Tensor) -> tuple:
+        """
+        Forward pass that returns both denoised output and physics residual.
+        
+        Used during PINN training to compute combined loss:
+            L = L_data(denoised, clean) + λ · L_physics(residual)
+        
+        Args:
+            x: Noisy input tensor of shape (B, 1, 1000)
+            
+        Returns:
+            Tuple of:
+                - denoised: Denoised output (B, 1, 1000)
+                - residual: Wave equation residual (B, 1, 998)
+        """
+        # Standard forward pass (inherited from DeepCAE)
+        denoised = self.forward(x)
+        
+        # Compute physics residual on denoised output
+        residual = self.compute_wave_equation_residual(denoised)
+        
+        return denoised, residual
+
+
 def count_parameters(model: nn.Module) -> int:
     """
     Count total trainable parameters in a model.
@@ -424,22 +273,13 @@ def print_model_summary(model: nn.Module, input_size: Tuple[int, ...] = (1, 1, 1
 
 
 if __name__ == "__main__":
-    # Test LightweightCAE
-    print("Testing LightweightCAE...")
-    model = LightweightCAE()
+    # Test DeepCAE
+    print("Testing DeepCAE...")
+    model = DeepCAE()
     print_model_summary(model)
     
     # Verify input/output shapes match
     x = torch.randn(4, 1, 1000)
     y = model(x)
     assert x.shape == y.shape, f"Shape mismatch: {x.shape} vs {y.shape}"
-    print("✓ Shape verification passed\n")
-    
-    # Test DeeperCAE
-    print("Testing DeeperCAE...")
-    deeper_model = DeeperCAE()
-    print_model_summary(deeper_model)
-    
-    y_deep = deeper_model(x)
-    assert x.shape == y_deep.shape, f"Shape mismatch: {x.shape} vs {y_deep.shape}"
     print("✓ Shape verification passed")

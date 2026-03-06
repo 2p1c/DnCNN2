@@ -21,7 +21,8 @@ from typing import Tuple, Optional, Dict, Any
 from tqdm import tqdm
 
 from data_utils import UltrasonicDataset, create_dataloaders
-from model import LightweightCAE, DeeperCAE, DeepCAE, count_parameters
+from model import DeepCAE, count_parameters
+from acoustic_validation import run_acoustic_validation
 
 
 def calculate_psnr(
@@ -640,6 +641,12 @@ def train(
     # Training curves
     plot_training_curves(history, "fig_training_curves.png")
     
+    # Acoustic feature validation (声学特征验证)
+    print("\n" + "="*60)
+    print("[INFO] Running acoustic feature validation...")
+    print("="*60)
+    run_acoustic_validation(model, val_loader, device, save_path="fig_acoustic_validation.png")
+    
     # ============================================================
     # Summary
     # ============================================================
@@ -652,6 +659,7 @@ def train(
     print(f"      - fig_pre_train_samples.png")
     print(f"      - fig_results.png")
     print(f"      - fig_training_curves.png")
+    print(f"      - fig_acoustic_validation.png")
     print(f"  → Model checkpoint: {checkpoint_path / 'best_model.pth'}")
     
     return model, history

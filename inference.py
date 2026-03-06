@@ -31,7 +31,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Optional
 
-from model import LightweightCAE, DeeperCAE, DeepCAE
+from model import DeepCAE
 from transformer import (
     load_mat_file, 
     reshape_to_grid, 
@@ -40,6 +40,7 @@ from transformer import (
     normalize_signal,
     truncate_signals
 )
+from acoustic_validation import run_inference_validation
 
 
 def load_model(
@@ -254,6 +255,10 @@ def denormalize_signals(
     """
     Denormalize denoised signals back to original scale.
     
+    This function reverses the normalization applied by normalize_signal().
+    It properly handles small amplitude signals by using the same dynamic
+    threshold logic.
+    
     Args:
         denoised_normalized: Denoised signals in [-1, 1] range
         metadata: Metadata containing normalization parameters
@@ -271,13 +276,28 @@ def denormalize_signals(
         # x = (normalized + 1) / 2 * (max - min) + min
         min_val = signal_mins[i]
         max_val = signal_maxs[i]
+        amplitude_range = max_val - min_val
         
-        if max_val - min_val > 1e-10:
-            denoised[i] = (denoised_normalized[i] + 1) / 2 * (max_val - min_val) + min_val
+        # Use dynamic threshold matching normalize_signal
+        # This ensures consistency between normalization and denormalization
+        min_threshold = np.finfo(np.float64).eps * 0.1  # ~2.22e-16
+        
+        if amplitude_range > min_threshold:
+            # Normal denormalization
+            denoised[i] = (denoised_normalized[i] + 1) / 2 * amplitude_range + min_val
         else:
-            denoised[i] = np.zeros_like(denoised_normalized[i])
+            # Signal was nearly flat during normalization
+            # For very small signals, preserve the denoised structure
+            if amplitude_range > 0:
+                # Even tiny signals should be denormalized properly
+                denoised[i] = (denoised_normalized[i] + 1) / 2 * amplitude_range + min_val
+            else:
+                # Truly flat signal (constant value)
+                # Restore to the constant value (min_val == max_val)
+                denoised[i] = np.full_like(denoised_normalized[i], min_val)
     
     return denoised
+
 
 
 def reverse_interpolation(
@@ -433,6 +453,17 @@ def run_inference(
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
+    # Acoustic feature validation (声学特征对比: 去噪前 vs 去噪后)
+    print("\n" + "="*60)
+    print("[INFO] Running acoustic feature validation...")
+    print("="*60)
+    validation_fig = str(output_dir / f"acoustic_validation_{timestamp}.png")
+    run_inference_validation(
+        input_signals=normalized_signals,
+        denoised_signals=denoised_normalized,
+        save_path=validation_fig,
+    )
+    
     # Save at target grid size (41x41)
     output_file_full = output_dir / f"denoised_{timestamp}_full.mat"
     mat_dict_full = {
@@ -470,6 +501,7 @@ def run_inference(
     print(f"  Output directory: {output_path}")
     print(f"  Model: {model_type}")
     print(f"  Device: {device}")
+    print(f"  Acoustic validation: {validation_fig}")
     
     return str(output_file_full)
 

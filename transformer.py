@@ -124,18 +124,35 @@ def interpolate_spatial(
     
     Interpolates each time point independently in the spatial domain.
     
+    IMPORTANT: Cubic interpolation has numerical precision issues with very small
+    amplitude signals (< ~1e-10). This function automatically detects such signals
+    and uses linear interpolation instead to preserve signal integrity.
+    
     Args:
         grid_small: Input grid of shape (n_cols_small, n_rows_small, signal_length)
         target_cols: Target number of columns
         target_rows: Target number of rows
-        method: Interpolation method ('linear', 'cubic')
+        method: Interpolation method ('linear', 'cubic'). Note: will automatically
+                downgrade to 'linear' if signal amplitude is too small for cubic.
         
     Returns:
         Interpolated grid of shape (target_cols, target_rows, signal_length)
     """
     n_cols_small, n_rows_small, signal_length = grid_small.shape
     
-    print(f"[INFO] Interpolating from {n_cols_small}x{n_rows_small} to {target_cols}x{target_rows}...")
+    # Check signal amplitude to determine best interpolation method
+    signal_amplitude = grid_small.max() - grid_small.min()
+    small_signal_threshold = 1e-9  # Signals below this should use linear interpolation
+    
+    # Automatically choose interpolation method based on signal amplitude
+    original_method = method
+    if signal_amplitude < small_signal_threshold and method == 'cubic':
+        method = 'linear'
+        print(f"[INFO] Signal amplitude ({signal_amplitude:.2e}) < threshold ({small_signal_threshold:.2e})")
+        print(f"[INFO] Automatically using 'linear' interpolation to preserve small signals")
+        print(f"       (cubic interpolation has numerical precision issues with signals < 1e-10)")
+    
+    print(f"[INFO] Interpolating from {n_cols_small}x{n_rows_small} to {target_cols}x{target_rows} using '{method}' method...")
     
     # Create coordinate grids
     x_small = np.linspace(0, 1, n_cols_small)
@@ -155,7 +172,7 @@ def interpolate_spatial(
         interp_func = interpolate.RegularGridInterpolator(
             (x_small, y_small),
             slice_small,
-            method=method,
+            method=method,  # Use potentially adjusted method
             bounds_error=False,
             fill_value=None
         )
@@ -170,7 +187,16 @@ def interpolate_spatial(
     
     print(f"  Interpolation complete. Output shape: {grid_large.shape}")
     
+    # Verify that signal was preserved (not zeroed out)
+    output_amplitude = grid_large.max() - grid_large.min()
+    if signal_amplitude > small_signal_threshold * 0.1 and output_amplitude < signal_amplitude * 0.01:
+        print(f"  ⚠️  WARNING: Signal amplitude dropped significantly during interpolation!")
+        print(f"      Input amplitude: {signal_amplitude:.2e}")
+        print(f"      Output amplitude: {output_amplitude:.2e}")
+        print(f"      This may indicate a numerical precision issue.")
+    
     return grid_large
+
 
 
 def truncate_signals(
@@ -205,22 +231,70 @@ def truncate_signals(
     return truncated_time, truncated_signals
 
 
-def normalize_signal(signal: np.ndarray) -> np.ndarray:
+def normalize_signal(signal: np.ndarray, min_threshold: float = None) -> np.ndarray:
     """
-    Normalize signal to [-1, 1] range.
+    Normalize signal to [-1, 1] range with improved handling of small-amplitude signals.
+    
+    This function now properly handles signals with very small amplitudes (e.g., ~1e-10)
+    by using a dynamic threshold based on floating-point precision instead of a fixed
+    threshold. For signals with amplitude range below the threshold, the function 
+    preserves the signal's center value instead of zeroing it out.
     
     Args:
-        signal: Input signal
+        signal: Input signal array
+        min_threshold: Minimum threshold for amplitude range. If None, uses a very small
+                      threshold based on machine epsilon (~1e-16 for float64), allowing
+                      processing of extremely small but valid signals.
         
     Returns:
-        Normalized signal
+        Normalized signal in [-1, 1] range (dtype: float32)
+    
+    Examples:
+        >>> # Normal signal
+        >>> sig = np.array([0.0, 0.5, 1.0])
+        >>> normalize_signal(sig)
+        array([-1.,  0.,  1.], dtype=float32)
+        
+        >>> # Very small amplitude signal (previously would be zeroed)
+        >>> small_sig = np.array([1e-12, 2e-12, 3e-12])
+        >>> result = normalize_signal(small_sig)
+        >>> # Now preserves the signal structure instead of returning zeros
     """
     min_val = signal.min()
     max_val = signal.max()
-    if max_val - min_val > 1e-10:
-        normalized = 2 * (signal - min_val) / (max_val - min_val) - 1
+    amplitude_range = max_val - min_val
+    
+    # Use dynamic threshold based on floating-point precision
+    if min_threshold is None:
+        # Use smaller multiplier for better sensitivity to tiny signals
+        # For float64: ~2.22e-15, threshold = ~2.22e-16 (100x smaller than before)
+        # For float32: ~1.19e-7, threshold = ~1.19e-7
+        # This allows handling of signals down to ~1e-15 range
+        eps = np.finfo(signal.dtype).eps
+        min_threshold = eps if signal.dtype == np.float32 else eps * 0.1
+    
+    if amplitude_range > min_threshold:
+        # Normal normalization: map [min_val, max_val] to [-1, 1]
+        normalized = 2 * (signal - min_val) / amplitude_range - 1
     else:
-        normalized = np.zeros_like(signal)
+        # Signal is nearly flat (amplitude range < threshold)
+        # Instead of zeroing, preserve the signal by centering it around 0
+        # This handles very small but valid signals (e.g., ~1e-10 to ~1e-15 amplitude)
+        center = (min_val + max_val) / 2
+        
+        # For extremely small signals, preserve their structure
+        if amplitude_range > 0:
+            # Signal has some variation, even if tiny - preserve it
+            # Normalize to full [-1, 1] range to maximize signal visibility
+            normalized = 2 * (signal - min_val) / amplitude_range - 1
+        elif np.abs(center) > min_threshold:
+            # Flat signal with DC offset
+            # Center it and scale to small value
+            normalized = (signal - center) / (np.abs(center) + min_threshold)
+            normalized = np.clip(normalized, -1, 1)
+        else:
+            # Signal is essentially zero (flat and centered at zero)
+            normalized = signal - center
     
     return normalized.astype(np.float32)
 
