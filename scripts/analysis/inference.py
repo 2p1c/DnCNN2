@@ -23,6 +23,12 @@ Usage:
     uv run python inference.py --input noisy.mat --output results/ --cols 21 --rows 21
 """
 
+
+import sys
+from pathlib import Path
+# Add project root to sys.path so modules like model, data_utils can be imported
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import argparse
 import numpy as np
 import torch
@@ -40,7 +46,7 @@ from transformer import (
     normalize_signal,
     truncate_signals
 )
-from acoustic_validation import run_inference_validation
+from scripts.analysis.acoustic_validation import run_inference_validation
 
 
 def load_model(

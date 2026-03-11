@@ -19,6 +19,12 @@ Usage:
     uv run python train_pinn.py --model deep --epochs 100 --physics_weight 0.01
 """
 
+
+import sys
+from pathlib import Path
+# Add project root to sys.path so modules like model, data_utils can be imported
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -30,13 +36,13 @@ from tqdm import tqdm
 
 from data_utils import create_dataloaders
 from model import DeepCAE_PINN, count_parameters
-from train import (
+from scripts.train.train import (
     calculate_psnr,
     calculate_snr,
     plot_pre_training_samples,
     plot_results,
 )
-from acoustic_validation import run_acoustic_validation
+from scripts.analysis.acoustic_validation import run_acoustic_validation
 
 
 # ============================================================

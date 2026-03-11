@@ -16,6 +16,12 @@ Usage:
     run_acoustic_validation(model, val_loader, device)
 """
 
+
+import sys
+from pathlib import Path
+# Add project root to sys.path so modules like model, data_utils can be imported
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import torch
 import torch.nn as nn
 import numpy as np

@@ -11,6 +11,12 @@ Usage:
     uv run python train.py
 """
 
+
+import sys
+from pathlib import Path
+# Add project root to sys.path so modules like model, data_utils can be imported
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -22,7 +28,7 @@ from tqdm import tqdm
 
 from data_utils import UltrasonicDataset, create_dataloaders
 from model import DeepCAE, count_parameters
-from acoustic_validation import run_acoustic_validation
+from scripts.analysis.acoustic_validation import run_acoustic_validation
 
 
 def calculate_psnr(
