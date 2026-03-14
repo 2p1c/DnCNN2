@@ -84,7 +84,9 @@ tensorboard_logs/
 *.jpeg
 figures/
 outputs/
-results/
+results/deepsets/
+results/denoised/
+results/site/
 
 # ===========================================
 # Data files (large)
