@@ -24,8 +24,7 @@ jobs:
           key: mkdocs-material-${{ env.cache_id }}
           path: | 
             ～/.cache
-            ~/results/.cache 
           restore-keys: |
             mkdocs-material-
       - run: pip install mkdocs-material 
-      - run: mkdocs gh-deploy --force -f results/mkdocs.yml
+      - run: mkdocs gh-deploy --force -f
