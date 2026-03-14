@@ -1,4 +1,4 @@
 site_name: Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising
 site_url: https://2p1c.github.io/Laser-NDT-Based-NN/
 theme:
-  name: minimal
+  name: material
