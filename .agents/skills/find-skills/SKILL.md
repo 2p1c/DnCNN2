@@ -86,6 +86,7 @@ Learn more: https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practic
 
 ### Step 4: Offer to Install
 
+<<<<<<< HEAD
 If the user wants to proceed, you can install the skill for them:
 
 ```bash
@@ -93,6 +94,39 @@ npx skills add <owner/repo@skill> -g -y
 ```
 
 The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts.
+=======
+If the user wants to proceed, install the skill using the following **two-step process**:
+
+#### Step 4a: Add to `skills.config.json`
+
+First, append the new skill entry to the `skills` array in `skills.config.json`, following the existing format exactly:
+
+```json
+{
+  "name": "<skill-name>",
+  "source": "<owner/repo>",
+  "enabled": true,
+  "description": "<简洁描述该技能的用途>"
+}
+```
+
+- `name`: skill 标识符（如 `gws-gmail`）
+- `source`: GitHub owner/repo 路径（如 `googleworkspace/cli`）
+- `enabled`: 新安装的技能始终设为 `true`
+- `description`: 简洁描述技能用途（中文优先）
+
+#### Step 4b: Run the install script
+
+更新 `skills.config.json` 后，运行本地安装脚本，将技能下载并部署到所有已配置的 agents：
+
+```bash
+./install-skills.sh
+```
+
+该脚本会读取 `skills.config.json`，安装所有 `enabled: true` 且尚未在 `skills-lock.json` 中记录的技能，并自动 commit 和 push 到远端仓库。
+
+> **禁止**直接使用 `npx skills add ... -g -y` 安装——必须通过 `skills.config.json` + `install-skills.sh` 的方式，以确保项目配置保持同步。
+>>>>>>> 9e716a047a37fda4da3b4fd01203a464f94c8ce7
 
 ## Common Skill Categories
 
