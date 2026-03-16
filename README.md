@@ -1,62 +1,173 @@
-# Ultrasonic Signal Denoising CAE
+# Ultrasonic Signal Denoising (CAE / PINN / DeepSets-PINN)
 
-A lightweight 1D Convolutional Autoencoder (CAE) for ultrasonic signal denoising in Non-Destructive Testing (NDT) applications.
+Ultrasonic 1D signal denoising project for NDT workflows, with three training pipelines:
 
-Based on the paper: *"Ultrasonic signal noise reduction based on convolutional autoencoders for NDT applications"*
+- `CAE` baseline
+- `PINN` (physics-informed loss)
+- `DeepSets + PINN` (patch/set-based spatial modeling)
 
-## Features
+The project supports synthetic data generation, file-based training, acoustic feature validation, and `.mat` inference export.
 
-- **Synthetic Data Generation**: Physics-based Gabor pulse signals with configurable SNR (10/20/30 dB)
-- **Lightweight Model**: 3-layer encoder/decoder optimized for consumer hardware
-- **Visualization**: Pre/post training signal comparisons and training curves
-- **Modular Design**: Easy to extend for real data loading
+## Environment
 
-## Signal Parameters
+```bash
+# Install dependencies
+uv sync
+```
 
-| Parameter | Value |
-|-----------|-------|
-| Sampling Rate | 6.25 MHz |
-| Duration | 160 μs |
-| Data Points | 1000 |
-| Center Frequency | 250 kHz |
+## Standard Output Directories
+
+All scripts now follow this unified convention by default:
+
+- Figures: `results/images/`
+- Checkpoints: `results/checkpoints/`
+- Inference `.mat` outputs: `results/`
+
+Directories are auto-created when needed.
 
 ## Quick Start
 
 ```bash
-# Install dependencies with uv
-uv sync
-
-# Run training (50 epochs)
+# Baseline CAE training
 uv run python scripts/train/train.py
+
+# PINN training
+uv run python scripts/train/train_pinn.py
+
+# DeepSets + PINN training
+uv run python scripts/train/train_deepsets_pinn.py --data_path data
 ```
 
-## Output Files
+## Training Commands
 
-After training, you'll find:
-- `fig_pre_train_samples.png` - Noisy vs Clean samples before training
-- `fig_results.png` - Denoising results (Noisy → Clean → Denoised)
-- `fig_training_curves.png` - Loss and PSNR curves
-- `checkpoints/best_model.pth` - Best model weights
+### 1. Baseline CAE
 
-## Project Structure
+```bash
+# Synthetic data (default)
+uv run python scripts/train/train.py
 
+# File mode
+uv run python scripts/train/train.py --mode file --data_path data
+
+# Deep model + longer training
+uv run python scripts/train/train.py --model deep --epochs 200 --lr 5e-4
+```
+
+Default checkpoint:
+- `results/checkpoints/best_model.pth`
+
+Typical figures:
+- `results/images/fig_pre_train_samples.png`
+- `results/images/fig_results.png`
+- `results/images/fig_training_curves.png`
+- `results/images/fig_acoustic_validation.png`
+
+### 2. PINN (CAE + physics)
+
+```bash
+uv run python scripts/train/train_pinn.py
+uv run python scripts/train/train_pinn.py --mode file --data_path data --physics_weight 0.001
+```
+
+Default checkpoint:
+- `results/checkpoints/best_pinn_model.pth`
+
+Typical figures:
+- `results/images/fig_pinn_pre_train_samples.png`
+- `results/images/fig_pinn_results.png`
+- `results/images/fig_pinn_training_curves.png`
+- `results/images/fig_pinn_acoustic_validation.png`
+
+### 3. DeepSets + PINN
+
+```bash
+uv run python scripts/train/train_deepsets_pinn.py --data_path data
+uv run python scripts/train/train_deepsets_pinn.py --epochs 100 --patch_size 7 --physics_weight 1e-4
+```
+
+Default checkpoint:
+- `results/checkpoints/best_deepsets_pinn.pth`
+
+Typical figures:
+- `results/images/fig_deepsets_pinn_training_curves.png`
+- `results/images/fig_deepsets_pinn_results.png`
+
+## Inference
+
+### CAE / PINN Inference
+
+```bash
+uv run python scripts/analysis/inference.py \
+	--input noisy.mat \
+	--output results/ \
+	--checkpoint results/checkpoints/best_model.pth
+```
+
+Outputs:
+- `results/denoised_<timestamp>_full.mat`
+- `results/denoised_<timestamp>_original.mat` (if reverse interpolation enabled)
+- `results/images/acoustic_validation_<timestamp>.png`
+
+### DeepSets Inference
+
+```bash
+uv run python scripts/analysis/inference_deepsets.py \
+	--input noisy.mat \
+	--output results/ \
+	--checkpoint results/checkpoints/best_deepsets_pinn.pth
+```
+
+Outputs:
+- `results/deepsets_denoised_<timestamp>.mat`
+- `results/deepsets_denoised_<timestamp>_original.mat` (if applicable)
+
+## Signal Preview Utilities
+
+```bash
+# Basic preview
+uv run python scripts/analysis/preview_signals.py
+
+# With detailed plot + noise type comparison
+uv run python scripts/analysis/preview_signals.py --detailed --compare_noise --no_show
+```
+
+Preview figures are saved under `results/images/` by default.
+
+## Core Signal Settings
+
+| Parameter | Value |
+|-----------|-------|
+| Sampling Rate | 6.25 MHz |
+| Duration | 160 us |
+| Data Points | 1000 |
+| Center Frequency | 250 kHz |
+
+## Project Structure (Simplified)
+
+```text
 DnCNN2/
-├── pyproject.toml      # Project configuration
-├── data_utils.py       # Dataset and data generation
-├── model.py            # CAE model architecture
+├── model/
+|   ├── model.py
+|   └── model_deepsets.py
+├── data/
+|   ├── data_utils.py
+|   └── data_deepsets.py
 ├── scripts/
-│   ├── train/          # Training pipelines
-│   └── analysis/       # Inference and acoustic feature validation
-└── README.md           # This file
+|   ├── transformer.py
+|   ├── train/
+|   |   ├── train.py
+|   |   ├── train_pinn.py
+|   |   └── train_deepsets_pinn.py
+|   └── analysis/
+|       ├── inference.py
+|       ├── inference_deepsets.py
+|       ├── acoustic_validation.py
+|       └── preview_signals.py
+├── results/
+|   ├── checkpoints/
+|   └── images/
+└── README.md
 ```
-
-## Model Architecture
-
-**LightweightCAE**:
-- Encoder: Conv1d (1→16→32→64), stride=2, ReLU, BatchNorm, Dropout
-- Decoder: ConvTranspose1d (64→32→16→1), stride=2, ReLU, Tanh output
-- Input/Output: (Batch, 1, 1000)
-- Parameters: ~30K
 
 ## License
 

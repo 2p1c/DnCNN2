@@ -14,10 +14,10 @@
 
 ## 数据准备
 
-与 CAE/PINN 共用 `transformer.py`，数据格式完全相同：
+与 CAE/PINN 共用 `scripts/transformer.py`，数据格式完全相同：
 
 ```bash
-uv run python transformer.py \
+uv run python scripts/transformer.py \
     --noisy /path/to/noisy_21x21.mat \
     --clean /path/to/clean_41x41.mat \
     --output data

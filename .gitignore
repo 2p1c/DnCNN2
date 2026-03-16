@@ -143,3 +143,6 @@ wandb/
 # Editor
 .vscode/
 .idea/
+configs/pipeline_deepsets.json
+configs/pipeline_pinn.json
+results/

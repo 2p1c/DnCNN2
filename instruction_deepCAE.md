@@ -1,13 +1,13 @@
 # CAE 超声信号去噪训练指南
 
-## 数据准备 (transformer.py)
+## 数据准备 (scripts/transformer.py)
 
 将实验 .mat 数据转换为训练格式。
 
 ### 基本用法
 
 ```bash
-uv run python transformer.py --noisy /Volumes/ESD-ISO/数据/260129/jiguang/21_21.mat --clean /Volumes/ESD-ISO/数据/260129/yadian250k/41_41.mat
+uv run python scripts/transformer.py --noisy /Volumes/ESD-ISO/数据/260129/jiguang/21_21.mat --clean /Volumes/ESD-ISO/数据/260129/yadian250k/41_41.mat
 ```
 
 ### 信号长度裁剪
@@ -16,13 +16,13 @@ uv run python transformer.py --noisy /Volumes/ESD-ISO/数据/260129/jiguang/21_2
 
 ```bash
 # 默认截取前 1000 个点
-uv run python transformer.py --noisy noisy.mat --clean clean.mat
+uv run python scripts/transformer.py --noisy noisy.mat --clean clean.mat
 
 # 自定义截取长度（如 800 个点）
-uv run python transformer.py --noisy noisy.mat --clean clean.mat --signal_length 800
+uv run python scripts/transformer.py --noisy noisy.mat --clean clean.mat --signal_length 800
 ```
 
-### transformer.py 参数
+### scripts/transformer.py 参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|

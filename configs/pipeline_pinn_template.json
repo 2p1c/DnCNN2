@@ -1,0 +1,48 @@
+{
+  "pipeline": "pinn",
+  "noisy_mat": "data/noisy.mat",
+  "clean_mat": "data/clean.mat",
+  "inference_input": "data/noisy.mat",
+
+  "data_dir": "data",
+  "results_dir": "results",
+  "checkpoint": null,
+
+  "skip_transform": false,
+  "skip_train": false,
+
+  "input_cols": 21,
+  "input_rows": 21,
+  "target_cols": 41,
+  "target_rows": 41,
+  "inference_input_cols": null,
+  "inference_input_rows": null,
+  "inference_target_cols": null,
+  "inference_target_rows": null,
+  "signal_length": 1000,
+  "interp_method": "cubic",
+  "augment_factor": 5,
+  "train_ratio": 0.8,
+
+  "epochs": 50,
+  "batch_size": 32,
+  "lr": 0.001,
+  "seed": 42,
+  "patience": 50,
+  "min_epochs": 30,
+  "dropout": 0.1,
+  "physics_weight": 0.001,
+
+  "patch_size": 5,
+  "stride": 1,
+  "model_type": "spatial_cae",
+  "base_channels": 16,
+  "coord_dim": 64,
+
+  "wave_speed": 5900.0,
+  "center_frequency": 250000.0,
+  "damping_ratio": 0.05,
+
+  "inference_batch_size": 64,
+  "validation_samples": 20
+}
