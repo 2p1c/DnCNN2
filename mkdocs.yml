@@ -2,3 +2,7 @@ site_name: Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoisin
 site_url: https://2p1c.github.io/Laser-NDT-Based-NN/
 theme:
   name: material
+  features:
+    - footer.hide.copyright
+  extra_css:
+    - stylesheets/extra.css
