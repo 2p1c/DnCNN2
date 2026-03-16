@@ -161,10 +161,10 @@ uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_tem
 
 ## 6) 实用命令
 
-- 使用模板运行：
+- 使用模板运行，启用日志记录功能：
 
 ```bash
-uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_template.json
+uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_template.json --log_experiment
 ```
 
 - 用模板 + 临时覆盖参数：

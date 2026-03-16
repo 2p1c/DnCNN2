@@ -5,7 +5,6 @@ This script combines the full workflow into one command:
 1) Transform raw .mat files into training dataset format
 2) Train PINN or DeepSets+PINN model
 3) Run inference with the trained checkpoint
-4) Run acoustic validation (before vs after denoising)
 
 ==========================
 Configuration Quick Guide
@@ -61,75 +60,14 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple
-
-import numpy as np
 
 from scripts.transformer import (
-    flatten_grid,
-    interpolate_spatial,
-    load_mat_file,
-    normalize_signal,
-    reshape_to_grid,
     transform_data,
-    truncate_signals,
 )
-from scripts.analysis.acoustic_validation import run_inference_validation
 from scripts.analysis.inference import run_inference as run_pinn_inference
 from scripts.analysis.inference_deepsets import run_inference as run_deepsets_inference
 from scripts.train.train_deepsets_pinn import train_deepsets_pinn
 from scripts.train.train_pinn import train_pinn
-
-
-def _load_and_align_signals(
-    input_mat: str,
-    denoised_mat: str,
-    input_cols: int,
-    input_rows: int,
-    target_cols: int,
-    target_rows: int,
-    signal_length: int,
-    interp_method: str,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Load input/denoised .mat and align them to same shape for validation."""
-    _, input_signals = load_mat_file(input_mat)
-    _, denoised_signals = load_mat_file(denoised_mat)
-
-    _, input_signals = truncate_signals(
-        np.arange(input_signals.shape[1]), input_signals, signal_length
-    )
-    _, denoised_signals = truncate_signals(
-        np.arange(denoised_signals.shape[1]), denoised_signals, signal_length
-    )
-
-    in_points = input_cols * input_rows
-    tgt_points = target_cols * target_rows
-
-    if input_signals.shape[0] != denoised_signals.shape[0]:
-        if (
-            input_signals.shape[0] == in_points
-            and denoised_signals.shape[0] == tgt_points
-        ):
-            input_grid = reshape_to_grid(input_signals, input_cols, input_rows)
-            input_interp = interpolate_spatial(
-                input_grid, target_cols, target_rows, method=interp_method
-            )
-            input_signals = flatten_grid(input_interp)
-        else:
-            raise ValueError(
-                "Cannot align validation signals: "
-                f"input points={input_signals.shape[0]}, "
-                f"denoised points={denoised_signals.shape[0]}"
-            )
-
-    input_norm = np.zeros_like(input_signals, dtype=np.float32)
-    denoised_norm = np.zeros_like(denoised_signals, dtype=np.float32)
-
-    for i in range(input_signals.shape[0]):
-        input_norm[i] = normalize_signal(input_signals[i])
-        denoised_norm[i] = normalize_signal(denoised_signals[i])
-
-    return input_norm, denoised_norm
 
 
 def _write_experiment_record(
@@ -185,6 +123,43 @@ def _write_experiment_record(
     return record_path
 
 
+def _validate_existing_file(path_str: str | None, arg_name: str) -> Path:
+    """Validate an input file path and return a resolved Path."""
+    if not path_str:
+        raise ValueError(f"--{arg_name} is required")
+
+    path = Path(path_str)
+    if not path.exists():
+        raise FileNotFoundError(f"--{arg_name} not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"--{arg_name} must point to a file, got: {path}")
+    return path
+
+
+def _validate_dataset_dir(data_dir: str) -> None:
+    """Validate transformed dataset directory structure for file-mode training."""
+    root = Path(data_dir)
+    if not root.exists():
+        raise FileNotFoundError(f"--data_dir not found: {root}")
+    if not root.is_dir():
+        raise ValueError(f"--data_dir must be a directory, got: {root}")
+
+    required_dirs = [
+        root / "train" / "noisy",
+        root / "train" / "clean",
+        root / "val" / "noisy",
+        root / "val" / "clean",
+    ]
+    missing = [str(p) for p in required_dirs if not p.exists() or not p.is_dir()]
+    if missing:
+        joined = "\n  - ".join(missing)
+        raise FileNotFoundError(
+            "Invalid --data_dir structure. Missing directories:\n"
+            f"  - {joined}\n"
+            "Expected transformed data layout: train/clean, train/noisy, val/clean, val/noisy"
+        )
+
+
 def main() -> None:
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--config", type=str, default=None)
@@ -202,13 +177,10 @@ def main() -> None:
         config_defaults = loaded
 
     parser = argparse.ArgumentParser(
-        description="Unified pipeline: transform -> train -> inference -> acoustic validation",
+        description="Unified pipeline: transform -> train -> inference",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         parents=[pre_parser],
     )
-
-    if config_defaults:
-        parser.set_defaults(**config_defaults)
 
     parser.add_argument("--pipeline", choices=["pinn", "deepsets"], default="pinn")
 
@@ -235,6 +207,30 @@ def main() -> None:
     parser.add_argument("--input_rows", type=int, default=21)
     parser.add_argument("--target_cols", type=int, default=41)
     parser.add_argument("--target_rows", type=int, default=41)
+    parser.add_argument(
+        "--inference_input_cols",
+        type=int,
+        default=None,
+        help="Input grid columns for inference/validation; defaults to input_cols",
+    )
+    parser.add_argument(
+        "--inference_input_rows",
+        type=int,
+        default=None,
+        help="Input grid rows for inference/validation; defaults to input_rows",
+    )
+    parser.add_argument(
+        "--inference_target_cols",
+        type=int,
+        default=None,
+        help="Target grid columns for inference/validation; defaults to target_cols",
+    )
+    parser.add_argument(
+        "--inference_target_rows",
+        type=int,
+        default=None,
+        help="Target grid rows for inference/validation; defaults to target_rows",
+    )
     parser.add_argument("--signal_length", type=int, default=1000)
     parser.add_argument("--interp_method", choices=["linear", "cubic"], default="cubic")
     parser.add_argument("--augment_factor", type=int, default=5)
@@ -282,6 +278,9 @@ def main() -> None:
         help="Optional short tag appended to experiment filename",
     )
 
+    if config_defaults:
+        parser.set_defaults(**config_defaults)
+
     args = parser.parse_args(remaining_argv)
 
     if not args.inference_input:
@@ -289,15 +288,42 @@ def main() -> None:
             "--inference_input is required (can also be provided in --config JSON)"
         )
 
+    _validate_existing_file(args.inference_input, "inference_input")
+
+    if not args.skip_transform:
+        _validate_existing_file(args.noisy_mat, "noisy_mat")
+        _validate_existing_file(args.clean_mat, "clean_mat")
+    else:
+        _validate_dataset_dir(args.data_dir)
+
     results_dir = Path(args.results_dir)
     checkpoints_dir = results_dir / "checkpoints"
-    images_dir = results_dir / "images"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
-    images_dir.mkdir(parents=True, exist_ok=True)
 
     physics_weight = args.physics_weight
     if physics_weight is None:
         physics_weight = 1e-3 if args.pipeline == "pinn" else 1e-4
+
+    inference_input_cols = (
+        args.inference_input_cols
+        if args.inference_input_cols is not None
+        else args.input_cols
+    )
+    inference_input_rows = (
+        args.inference_input_rows
+        if args.inference_input_rows is not None
+        else args.input_rows
+    )
+    inference_target_cols = (
+        args.inference_target_cols
+        if args.inference_target_cols is not None
+        else args.target_cols
+    )
+    inference_target_rows = (
+        args.inference_target_rows
+        if args.inference_target_rows is not None
+        else args.target_rows
+    )
 
     print("=" * 70)
     print("Unified Ultrasonic Training + Inference Pipeline")
@@ -308,17 +334,17 @@ def main() -> None:
     print(f"[CONFIG] epochs={args.epochs}, batch_size={args.batch_size}, lr={args.lr}")
     print(f"[CONFIG] physics_weight={physics_weight}")
     print(
-        f"[CONFIG] grid={args.input_cols}x{args.input_rows} -> {args.target_cols}x{args.target_rows}"
+        f"[CONFIG] train_grid={args.input_cols}x{args.input_rows} -> {args.target_cols}x{args.target_rows}"
+    )
+    print(
+        "[CONFIG] "
+        f"inference_grid={inference_input_cols}x{inference_input_rows} "
+        f"-> {inference_target_cols}x{inference_target_rows}"
     )
     print(f"[CONFIG] signal_length={args.signal_length}, interp={args.interp_method}")
 
     if not args.skip_transform:
-        if not args.noisy_mat or not args.clean_mat:
-            raise ValueError(
-                "--noisy_mat and --clean_mat are required unless --skip_transform is used"
-            )
-
-        print("\n[STAGE 1/4] Data transform")
+        print("\n[STAGE 1/3] Data transform")
         transform_data(
             noisy_path=args.noisy_mat,
             clean_path=args.clean_mat,
@@ -333,10 +359,10 @@ def main() -> None:
             target_signal_length=args.signal_length,
         )
     else:
-        print("\n[STAGE 1/4] Data transform skipped")
+        print("\n[STAGE 1/3] Data transform skipped")
 
     if not args.skip_train:
-        print("\n[STAGE 2/4] Model training")
+        print("\n[STAGE 2/3] Model training")
         if args.pipeline == "pinn":
             train_pinn(
                 num_epochs=args.epochs,
@@ -381,7 +407,7 @@ def main() -> None:
                 coord_dim=args.coord_dim,
             )
     else:
-        print("\n[STAGE 2/4] Model training skipped")
+        print("\n[STAGE 2/3] Model training skipped")
 
     if args.checkpoint:
         checkpoint_path = args.checkpoint
@@ -393,17 +419,17 @@ def main() -> None:
         )
         checkpoint_path = str(checkpoints_dir / checkpoint_name)
 
-    print("\n[STAGE 3/4] Inference")
+    print("\n[STAGE 3/3] Inference")
     if args.pipeline == "pinn":
         output_mat = run_pinn_inference(
             input_path=args.inference_input,
             output_path=args.results_dir,
             checkpoint_path=checkpoint_path,
             model_type="deep",
-            grid_cols=args.input_cols,
-            grid_rows=args.input_rows,
-            target_cols=args.target_cols,
-            target_rows=args.target_rows,
+            grid_cols=inference_input_cols,
+            grid_rows=inference_input_rows,
+            target_cols=inference_target_cols,
+            target_rows=inference_target_rows,
             interpolation_method=args.interp_method,
             batch_size=args.inference_batch_size,
             save_original_size=True,
@@ -414,37 +440,17 @@ def main() -> None:
             input_path=args.inference_input,
             output_path=args.results_dir,
             checkpoint_path=checkpoint_path,
-            grid_cols=args.input_cols,
-            grid_rows=args.input_rows,
-            target_cols=args.target_cols,
-            target_rows=args.target_rows,
+            grid_cols=inference_input_cols,
+            grid_rows=inference_input_rows,
+            target_cols=inference_target_cols,
+            target_rows=inference_target_rows,
             patch_size=args.patch_size,
             interpolation_method=args.interp_method,
             target_signal_length=args.signal_length,
         )
 
-    print("\n[STAGE 4/4] Acoustic validation")
-    input_norm, denoised_norm = _load_and_align_signals(
-        input_mat=args.inference_input,
-        denoised_mat=output_mat,
-        input_cols=args.input_cols,
-        input_rows=args.input_rows,
-        target_cols=args.target_cols,
-        target_rows=args.target_rows,
-        signal_length=args.signal_length,
-        interp_method=args.interp_method,
-    )
-
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    val_fig = (
-        images_dir / f"unified_inference_acoustic_validation_{args.pipeline}_{ts}.png"
-    )
-    run_inference_validation(
-        input_signals=input_norm,
-        denoised_signals=denoised_norm,
-        save_path=str(val_fig),
-        num_samples=args.validation_samples,
-    )
+    val_fig = "generated during inference stage"
 
     print("\n" + "=" * 70)
     print("Pipeline finished successfully")

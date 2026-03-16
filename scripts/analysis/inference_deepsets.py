@@ -34,9 +34,11 @@ from scripts.transformer import (
     normalize_signal,
     truncate_signals,
 )
+from scripts.analysis.acoustic_validation import run_inference_validation
 
 
 RESULTS_DIR = Path("results")
+IMAGES_DIR = RESULTS_DIR / "images"
 CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
 
 
@@ -382,7 +384,18 @@ def run_inference(
     # Save
     out_dir = Path(output_path)
     out_dir.mkdir(parents=True, exist_ok=True)
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    print("\n" + "=" * 60)
+    print("[INFO] Running acoustic feature validation...")
+    print("=" * 60)
+    validation_fig = str(IMAGES_DIR / f"acoustic_validation_deepsets_{timestamp}.png")
+    run_inference_validation(
+        input_signals=normalised,
+        denoised_signals=denoised_norm,
+        save_path=validation_fig,
+    )
 
     out_file = out_dir / f"deepsets_denoised_{timestamp}.mat"
     sio.savemat(
@@ -425,6 +438,7 @@ def run_inference(
     print("\n" + "=" * 60)
     print("Inference Complete!")
     print("=" * 60)
+    print(f"  Acoustic validation: {validation_fig}")
     return str(out_file)
 
 

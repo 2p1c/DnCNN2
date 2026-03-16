@@ -755,9 +755,9 @@ def _plot_validation_figure(
     # 根据评估结果给单元格上色
     for i in range(1, len(table_data)):
         assessment = table_data[i][2]
-        if "✅" in assessment:
+        if "GOOD" in assessment:
             table[i, 2].set_facecolor("#E8F5E9")
-        elif "⚠️" in assessment:
+        elif "FAIR" in assessment:
             table[i, 2].set_facecolor("#FFF9C4")
         else:
             table[i, 2].set_facecolor("#FFEBEE")
@@ -778,21 +778,21 @@ def _plot_validation_figure(
 def _assess(value: float, good_thresh: float, warn_thresh: float) -> str:
     """评估指标: 越高越好."""
     if value >= good_thresh:
-        return f"✅ Good"
+        return "GOOD"
     elif value >= warn_thresh:
-        return f"⚠️ Fair"
+        return "FAIR"
     else:
-        return f"❌ Poor"
+        return "POOR"
 
 
 def _assess_lower(value: float, good_thresh: float, warn_thresh: float) -> str:
     """评估指标: 越低越好 (如误差)."""
     if value <= good_thresh:
-        return f"✅ Good"
+        return "GOOD"
     elif value <= warn_thresh:
-        return f"⚠️ Fair"
+        return "FAIR"
     else:
-        return f"❌ Poor"
+        return "POOR"
 
 
 # ============================================================
@@ -857,14 +857,14 @@ def _print_report(quality_metrics: Dict) -> None:
     print("=" * 60)
 
     # 总体评估
-    good_count = sum(1 for _, _, s in rows if "✅" in s)
+    good_count = sum(1 for _, _, s in rows if "GOOD" in s)
     total = len(rows)
-    print(f"\n  Overall: {good_count}/{total} metrics passed ✅")
+    print(f"\n  Overall: {good_count}/{total} metrics passed (GOOD)")
 
     if good_count == total:
         print("  → Excellent! Acoustic features well preserved during denoising.")
     elif good_count >= total * 0.7:
-        print("  → Good. Most acoustic features preserved. Check ⚠️/❌ items.")
+        print("  → Good. Most acoustic features preserved. Check FAIR/POOR items.")
     else:
         print("  → Warning: Significant acoustic information loss detected.")
 
@@ -1335,9 +1335,9 @@ def _plot_inference_validation_figure(
 
     for i in range(1, len(table_data)):
         assessment = table_data[i][2]
-        if "✅" in assessment:
+        if "GOOD" in assessment:
             table[i, 2].set_facecolor("#E8F5E9")
-        elif "⚠️" in assessment:
+        elif "FAIR" in assessment:
             table[i, 2].set_facecolor("#FFF9C4")
         else:
             table[i, 2].set_facecolor("#FFEBEE")
@@ -1395,9 +1395,9 @@ def _print_inference_report(quality_metrics: Dict) -> None:
 
     print("=" * 60)
 
-    good_count = sum(1 for _, _, s in rows if "✅" in s)
+    good_count = sum(1 for _, _, s in rows if "GOOD" in s)
     total = len(rows)
-    print(f"\n  Overall: {good_count}/{total} metrics passed ✅")
+    print(f"\n  Overall: {good_count}/{total} metrics passed (GOOD)")
 
     if good_count == total:
         print("  → Excellent! Denoising preserved acoustic features well.")
