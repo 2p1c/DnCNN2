@@ -32,18 +32,19 @@ from typing import Tuple, Optional
 # ============================================================
 # Physical Constants (shared with model.py / DeepCAE_PINN)
 # ============================================================
-SAMPLING_RATE: float = 6.25e6      # Hz
-DURATION: float = 160e-6           # seconds
-NUM_POINTS: int = 1000             # time samples
-CENTER_FREQUENCY: float = 250e3   # Hz
-DEFAULT_WAVE_SPEED: float = 5900.0 # m/s  (steel)
-DEFAULT_DX: float = 1e-3          # 1 mm grid spacing
-DEFAULT_DY: float = 1e-3          # 1 mm grid spacing
+SAMPLING_RATE: float = 6.25e6  # Hz
+DURATION: float = 160e-6  # seconds
+NUM_POINTS: int = 1000  # time samples
+CENTER_FREQUENCY: float = 250e3  # Hz
+DEFAULT_WAVE_SPEED: float = 5900.0  # m/s  (steel)
+DEFAULT_DX: float = 1e-3  # 1 mm grid spacing
+DEFAULT_DY: float = 1e-3  # 1 mm grid spacing
 
 
 # ============================================================
 # Sub-Modules
 # ============================================================
+
 
 class SignalEncoder(nn.Module):
     """
@@ -70,39 +71,56 @@ class SignalEncoder(nn.Module):
         padding = kernel_size // 2
 
         self.enc1 = nn.Sequential(
-            nn.Conv1d(in_channels, base_channels, kernel_size,
-                      stride=2, padding=padding),
+            nn.Conv1d(
+                in_channels, base_channels, kernel_size, stride=2, padding=padding
+            ),
             nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.1, inplace=True),
         )  # T=1000 → 500
 
         self.enc2 = nn.Sequential(
-            nn.Conv1d(base_channels, base_channels * 2, kernel_size,
-                      stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels, base_channels * 2, kernel_size, stride=2, padding=padding
+            ),
             nn.BatchNorm1d(base_channels * 2),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 500 → 250
 
         self.enc3 = nn.Sequential(
-            nn.Conv1d(base_channels * 2, base_channels * 4, kernel_size,
-                      stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 2,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 4),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 250 → 125
 
         self.enc4 = nn.Sequential(
-            nn.Conv1d(base_channels * 4, base_channels * 8, kernel_size,
-                      stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 4,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 125 → 63
 
         self.enc5 = nn.Sequential(
-            nn.Conv1d(base_channels * 8, base_channels * 8, kernel_size,
-                      stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
         )  # 63 → 32
@@ -123,8 +141,8 @@ class SignalEncoder(nn.Module):
         h = self.enc3(h)
         h = self.enc4(h)
         h = self.enc5(h)
-        h = self.pool(h).squeeze(-1)   # (*, 256)
-        h = self.proj(h)               # (*, D_s)
+        h = self.pool(h).squeeze(-1)  # (*, 256)
+        h = self.proj(h)  # (*, D_s)
         return h
 
 
@@ -157,8 +175,9 @@ class PointEncoder(nn.Module):
     Output: (*, D)   fused point feature
     """
 
-    def __init__(self, signal_dim: int = 256, coord_dim: int = 64,
-                 output_dim: int = 256):
+    def __init__(
+        self, signal_dim: int = 256, coord_dim: int = 64, output_dim: int = 256
+    ):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(signal_dim + coord_dim, output_dim),
@@ -166,8 +185,9 @@ class PointEncoder(nn.Module):
             nn.Linear(output_dim, output_dim),
         )
 
-    def forward(self, signal_emb: torch.Tensor,
-                coord_emb: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, signal_emb: torch.Tensor, coord_emb: torch.Tensor
+    ) -> torch.Tensor:
         return self.mlp(torch.cat([signal_emb, coord_emb], dim=-1))
 
 
@@ -201,43 +221,68 @@ class SignalDecoder(nn.Module):
         self.pre = nn.Linear(input_dim, latent_channels * latent_length)
 
         self.dec5 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 8, base_channels * 8,
-                               kernel_size, stride=2, padding=padding,
-                               output_padding=0),
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
         )  # 32 → 63
 
         self.dec4 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 8, base_channels * 4,
-                               kernel_size, stride=2, padding=padding,
-                               output_padding=0),
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
             nn.BatchNorm1d(base_channels * 4),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 63 → 125
 
         self.dec3 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 4, base_channels * 2,
-                               kernel_size, stride=2, padding=padding,
-                               output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels * 4,
+                base_channels * 2,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.BatchNorm1d(base_channels * 2),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 125 → 250
 
         self.dec2 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 2, base_channels,
-                               kernel_size, stride=2, padding=padding,
-                               output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels * 2,
+                base_channels,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.1, inplace=True),
         )  # 250 → 500
 
         self.dec1 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels, 1, kernel_size,
-                               stride=2, padding=padding,
-                               output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels,
+                1,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.Tanh(),
         )  # 500 → 1000
 
@@ -249,8 +294,7 @@ class SignalDecoder(nn.Module):
             (*, 1, T)
         """
         h = self.pre(feat)  # (*, latent_channels * latent_length)
-        h = h.view(*feat.shape[:-1], self.latent_channels,
-                    self.latent_length)
+        h = h.view(*feat.shape[:-1], self.latent_channels, self.latent_length)
         h = self.dec5(h)
         h = self.dec4(h)
         h = self.dec3(h)
@@ -262,6 +306,7 @@ class SignalDecoder(nn.Module):
 # ============================================================
 # Main Model
 # ============================================================
+
 
 class DeepSetsPINN(nn.Module):
     """
@@ -316,7 +361,8 @@ class DeepSetsPINN(nn.Module):
             embed_dim=signal_embed_dim,
         )
         self.coord_mlp = CoordinateMLP(
-            coord_dim=2, embed_dim=coord_embed_dim,
+            coord_dim=2,
+            embed_dim=coord_embed_dim,
         )
         self.point_encoder = PointEncoder(
             signal_dim=signal_embed_dim,
@@ -371,8 +417,12 @@ class DeepSetsPINN(nn.Module):
         for dc in range(-half, half + 1):
             for dr in range(-half, half + 1):
                 # Check all 4 neighbours are within the patch
-                if (abs(dc - 1) <= half and abs(dc + 1) <= half
-                        and abs(dr - 1) <= half and abs(dr + 1) <= half):
+                if (
+                    abs(dc - 1) <= half
+                    and abs(dc + 1) <= half
+                    and abs(dr - 1) <= half
+                    and abs(dr + 1) <= half
+                ):
                     idx = (dc + half) * P + (dr + half)
                     interior.append(idx)
                     left.append((dc - 1 + half) * P + (dr + half))
@@ -381,18 +431,19 @@ class DeepSetsPINN(nn.Module):
                     up.append((dc + half) * P + (dr + 1 + half))
 
         # Register as non-parameter buffers (move with model.to(device))
-        self.register_buffer('_interior_idx', torch.tensor(interior, dtype=torch.long))
-        self.register_buffer('_left_idx',     torch.tensor(left,     dtype=torch.long))
-        self.register_buffer('_right_idx',    torch.tensor(right,    dtype=torch.long))
-        self.register_buffer('_down_idx',     torch.tensor(down,     dtype=torch.long))
-        self.register_buffer('_up_idx',       torch.tensor(up,       dtype=torch.long))
+        self.register_buffer("_interior_idx", torch.tensor(interior, dtype=torch.long))
+        self.register_buffer("_left_idx", torch.tensor(left, dtype=torch.long))
+        self.register_buffer("_right_idx", torch.tensor(right, dtype=torch.long))
+        self.register_buffer("_down_idx", torch.tensor(down, dtype=torch.long))
+        self.register_buffer("_up_idx", torch.tensor(up, dtype=torch.long))
 
     def _initialize_weights(self) -> None:
         """Kaiming initialisation for Conv and Linear layers."""
         for m in self.modules():
             if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
                 nn.init.kaiming_normal_(
-                    m.weight, mode='fan_out', nonlinearity='leaky_relu')
+                    m.weight, mode="fan_out", nonlinearity="leaky_relu"
+                )
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm1d):
@@ -400,7 +451,8 @@ class DeepSetsPINN(nn.Module):
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(
-                    m.weight, mode='fan_in', nonlinearity='leaky_relu')
+                    m.weight, mode="fan_in", nonlinearity="leaky_relu"
+                )
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
@@ -428,21 +480,21 @@ class DeepSetsPINN(nn.Module):
         # --- Per-point encoding ---
         # Reshape to (B*R, 1, T) for conv encoder
         sig_flat = noisy_signals.reshape(B * R, 1, T)
-        sig_emb = self.signal_encoder(sig_flat)          # (B*R, D_s)
-        sig_emb = sig_emb.view(B, R, -1)                # (B, R, D_s)
+        sig_emb = self.signal_encoder(sig_flat)  # (B*R, D_s)
+        sig_emb = sig_emb.view(B, R, -1)  # (B, R, D_s)
 
-        coord_emb = self.coord_mlp(coordinates)          # (B, R, D_c)
+        coord_emb = self.coord_mlp(coordinates)  # (B, R, D_c)
         point_feat = self.point_encoder(sig_emb, coord_emb)  # (B, R, D)
 
         # --- Set aggregation ---
-        global_feat = point_feat.mean(dim=1, keepdim=True)    # (B, 1, D)
-        global_feat = global_feat.expand(-1, R, -1)           # (B, R, D)
+        global_feat = point_feat.mean(dim=1, keepdim=True)  # (B, 1, D)
+        global_feat = global_feat.expand(-1, R, -1)  # (B, R, D)
 
         # --- Per-point decoding ---
         dec_input = torch.cat([point_feat, global_feat], dim=-1)  # (B, R, 2D)
-        dec_flat = dec_input.reshape(B * R, -1)           # (B*R, 2D)
-        out_flat = self.decoder(dec_flat)                  # (B*R, 1, T)
-        denoised = out_flat.view(B, R, T)                 # (B, R, T)
+        dec_flat = dec_input.reshape(B * R, -1)  # (B*R, 2D)
+        out_flat = self.decoder(dec_flat)  # (B*R, 1, T)
+        denoised = out_flat.view(B, R, T)  # (B, R, T)
 
         return denoised
 
@@ -474,28 +526,29 @@ class DeepSetsPINN(nn.Module):
             residual: (B, N_interior, T-2)
         """
         B, R, T = denoised.shape
-        c2 = self.wave_speed ** 2
+        c2 = self.wave_speed**2
 
         # Gather interior and neighbour signals using precomputed indices
         # Each index tensor is (N_int,); advanced indexing broadcasts over B
-        u_c = denoised[:, self._interior_idx, :]   # (B, N_int, T)
-        u_l = denoised[:, self._left_idx, :]       # (B, N_int, T)
-        u_r = denoised[:, self._right_idx, :]      # (B, N_int, T)
-        u_d = denoised[:, self._down_idx, :]       # (B, N_int, T)
-        u_u = denoised[:, self._up_idx, :]         # (B, N_int, T)
+        u_c = denoised[:, self._interior_idx, :]  # (B, N_int, T)
+        u_l = denoised[:, self._left_idx, :]  # (B, N_int, T)
+        u_r = denoised[:, self._right_idx, :]  # (B, N_int, T)
+        u_d = denoised[:, self._down_idx, :]  # (B, N_int, T)
+        u_u = denoised[:, self._up_idx, :]  # (B, N_int, T)
 
         # Time derivative: central difference  (T → T-2)
-        u_tt = (u_c[:, :, 2:] - 2.0 * u_c[:, :, 1:-1] + u_c[:, :, :-2]) \
-               / (self.dt ** 2)
+        u_tt = (u_c[:, :, 2:] - 2.0 * u_c[:, :, 1:-1] + u_c[:, :, :-2]) / (self.dt**2)
 
         # Spatial derivatives: central difference across grid neighbours
-        u_xx = (u_r[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_l[:, :, 1:-1]) \
-               / (self.dx ** 2)
-        u_yy = (u_u[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_d[:, :, 1:-1]) \
-               / (self.dy ** 2)
+        u_xx = (u_r[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_l[:, :, 1:-1]) / (
+            self.dx**2
+        )
+        u_yy = (u_u[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_d[:, :, 1:-1]) / (
+            self.dy**2
+        )
 
         # Wave equation residual, normalised by ω₀²
-        residual = (u_tt - c2 * (u_xx + u_yy)) / (self.omega0 ** 2)
+        residual = (u_tt - c2 * (u_xx + u_yy)) / (self.omega0**2)
 
         # Energy mask — focus on signal-rich regions (computed without grad)
         with torch.no_grad():
@@ -503,11 +556,12 @@ class DeepSetsPINN(nn.Module):
             N_int = u_c.shape[1]
             u_flat = u_c.reshape(B * N_int, 1, T)
             energy = torch.nn.functional.avg_pool1d(
-                u_flat.abs(), kernel_size=9, stride=1, padding=4)
+                u_flat.abs(), kernel_size=9, stride=1, padding=4
+            )
             mask = energy / energy.amax(dim=-1, keepdim=True).clamp_min(1e-6)
             mask = mask.view(B, N_int, T)[:, :, 1:-1]  # (B, N_int, T-2)
 
-        return residual * mask   # (B, N_int, T-2)
+        return residual * mask  # (B, N_int, T-2)
 
     def physics_forward(
         self,
@@ -543,6 +597,7 @@ class DeepSetsPINN(nn.Module):
 # ============================================================
 # Spatial-Auxiliary DeepCAE
 # ============================================================
+
 
 class SpatialAuxiliaryCAE(nn.Module):
     """
@@ -596,38 +651,60 @@ class SpatialAuxiliaryCAE(nn.Module):
         # --- 1. Signal Encoder (DeepCAE backbone) ---
         # Input: (B*R, 1, 1000)
         self.enc1 = nn.Sequential(
-            nn.Conv1d(in_channels, base_channels, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                in_channels, base_channels, kernel_size, stride=2, padding=padding
+            ),
             nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.1, inplace=True),
         )  # 1000 → 500
 
         self.enc2 = nn.Sequential(
-            nn.Conv1d(base_channels, base_channels * 2, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels, base_channels * 2, kernel_size, stride=2, padding=padding
+            ),
             nn.BatchNorm1d(base_channels * 2),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 500 → 250
 
         self.enc3 = nn.Sequential(
-            nn.Conv1d(base_channels * 2, base_channels * 4, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 2,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 4),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 250 → 125
 
         self.enc4 = nn.Sequential(
-            nn.Conv1d(base_channels * 4, base_channels * 8, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 4,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 125 → 63
 
         self.enc5 = nn.Sequential(
-            nn.Conv1d(base_channels * 8, base_channels * 8, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
         )  # 63 → 32  | Output: (B*R, 256, 32)
-        
+
         # Bottleneck size: 256 channels * 32 spatial length
         self.latent_channels = base_channels * 8
         self.latent_length = 32
@@ -646,38 +723,68 @@ class SpatialAuxiliaryCAE(nn.Module):
         # --- 3. Signal Decoder (DeepCAE backbone) ---
         # Input: (B*R, 256, 32)
         self.dec5 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 8, base_channels * 8, kernel_size,
-                               stride=2, padding=padding, output_padding=0),
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
         )  # 32 → 63
 
         self.dec4 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 8, base_channels * 4, kernel_size,
-                               stride=2, padding=padding, output_padding=0),
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
             nn.BatchNorm1d(base_channels * 4),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 63 → 125
 
         self.dec3 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 4, base_channels * 2, kernel_size,
-                               stride=2, padding=padding, output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels * 4,
+                base_channels * 2,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.BatchNorm1d(base_channels * 2),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 125 → 250
 
         self.dec2 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 2, base_channels, kernel_size,
-                               stride=2, padding=padding, output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels * 2,
+                base_channels,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.1, inplace=True),
         )  # 250 → 500
 
         self.dec1 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels, 1, kernel_size,
-                               stride=2, padding=padding, output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels,
+                1,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.Tanh(),
         )  # 500 → 1000
 
@@ -699,8 +806,12 @@ class SpatialAuxiliaryCAE(nn.Module):
         interior, left, right, down, up = [], [], [], [], []
         for dc in range(-half, half + 1):
             for dr in range(-half, half + 1):
-                if (abs(dc - 1) <= half and abs(dc + 1) <= half
-                        and abs(dr - 1) <= half and abs(dr + 1) <= half):
+                if (
+                    abs(dc - 1) <= half
+                    and abs(dc + 1) <= half
+                    and abs(dr - 1) <= half
+                    and abs(dr + 1) <= half
+                ):
                     idx = (dc + half) * P + (dr + half)
                     interior.append(idx)
                     left.append((dc - 1 + half) * P + (dr + half))
@@ -708,24 +819,28 @@ class SpatialAuxiliaryCAE(nn.Module):
                     down.append((dc + half) * P + (dr - 1 + half))
                     up.append((dc + half) * P + (dr + 1 + half))
 
-        self.register_buffer('_interior_idx', torch.tensor(interior, dtype=torch.long))
-        self.register_buffer('_left_idx',     torch.tensor(left,     dtype=torch.long))
-        self.register_buffer('_right_idx',    torch.tensor(right,    dtype=torch.long))
-        self.register_buffer('_down_idx',     torch.tensor(down,     dtype=torch.long))
-        self.register_buffer('_up_idx',       torch.tensor(up,       dtype=torch.long))
+        self.register_buffer("_interior_idx", torch.tensor(interior, dtype=torch.long))
+        self.register_buffer("_left_idx", torch.tensor(left, dtype=torch.long))
+        self.register_buffer("_right_idx", torch.tensor(right, dtype=torch.long))
+        self.register_buffer("_down_idx", torch.tensor(down, dtype=torch.long))
+        self.register_buffer("_up_idx", torch.tensor(up, dtype=torch.long))
 
     def _initialize_weights(self) -> None:
         """Kaiming initialisation for Conv and Linear layers."""
         for m in self.modules():
             if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_out", nonlinearity="leaky_relu"
+                )
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_in", nonlinearity="leaky_relu"
+                )
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
@@ -753,38 +868,42 @@ class SpatialAuxiliaryCAE(nn.Module):
         e3 = self.enc3(e2)
         e4 = self.enc4(e3)
         e5 = self.enc5(e4)  # (B*R, 256, 32)
-        
+
         # 2. Spatial Auxiliary Fusion at Bottleneck
         # Pool temporal dimension to get channel descriptors: (B*R, latent_channels)
         local_channel_desc = e5.mean(dim=2)
         local_channel_desc = local_channel_desc.view(B, R, self.latent_channels)
-        
+
         # Aggregate global context across the patch: (B, 1, latent_channels)
         global_ctx, _ = torch.max(local_channel_desc, dim=1, keepdim=True)
         global_ctx = global_ctx.expand(-1, R, -1)  # (B, R, latent_channels)
-        
+
         # Coordinate embedding: (B, R, coord_dim)
         coord_emb = self.coord_mlp(coordinates)
-        
+
         # Modulation: Shift vector based on global context + coords
-        mod_input = torch.cat([global_ctx, coord_emb], dim=-1)  # (B, R, latent_channels + coord_dim)
-        shift = self.spatial_modulator(mod_input)               # (B, R, latent_channels)
-        
+        mod_input = torch.cat(
+            [global_ctx, coord_emb], dim=-1
+        )  # (B, R, latent_channels + coord_dim)
+        shift = self.spatial_modulator(mod_input)  # (B, R, latent_channels)
+
         # Additive soft modulation (broadcast along the length dimension 32)
         # shift: (B, R, latent_channels) -> (B*R, latent_channels, 1)
         shift_expanded = shift.view(B * R, self.latent_channels, 1)
-        
-        modified_latent = e5 + shift_expanded                   # (B*R, latent_channels, 32)
-        
+
+        modified_latent = e5 + shift_expanded  # (B*R, latent_channels, 32)
+
         # 3. Independent Signal Decoding
         d5 = self.dec5(modified_latent)
-        d4 = self.dec4(d5 + e4)  # Skip connections (U-Net style optional, currently disabled in DeepCAE, kept linear here)
+        d4 = self.dec4(
+            d5 + e4
+        )  # Skip connections (U-Net style optional, currently disabled in DeepCAE, kept linear here)
         # DeepCAE does not use UNet skip connections, preserving linear flow:
         d4 = self.dec4(d5)
         d3 = self.dec3(d4)
         d2 = self.dec2(d3)
         d1 = self.dec1(d2)  # (B*R, 1, 1000)
-        
+
         denoised = d1.view(B, R, T)
         return denoised
 
@@ -804,7 +923,7 @@ class SpatialAuxiliaryCAE(nn.Module):
         u_tt - c^2 (u_xx + u_yy) = 0
         """
         B, R, T = denoised.shape
-        c2 = self.wave_speed ** 2
+        c2 = self.wave_speed**2
 
         u_c = denoised[:, self._interior_idx, :]
         u_l = denoised[:, self._left_idx, :]
@@ -812,20 +931,22 @@ class SpatialAuxiliaryCAE(nn.Module):
         u_d = denoised[:, self._down_idx, :]
         u_u = denoised[:, self._up_idx, :]
 
-        u_tt = (u_c[:, :, 2:] - 2.0 * u_c[:, :, 1:-1] + u_c[:, :, :-2]) \
-               / (self.dt ** 2)
-        u_xx = (u_r[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_l[:, :, 1:-1]) \
-               / (self.dx ** 2)
-        u_yy = (u_u[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_d[:, :, 1:-1]) \
-               / (self.dy ** 2)
+        u_tt = (u_c[:, :, 2:] - 2.0 * u_c[:, :, 1:-1] + u_c[:, :, :-2]) / (self.dt**2)
+        u_xx = (u_r[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_l[:, :, 1:-1]) / (
+            self.dx**2
+        )
+        u_yy = (u_u[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_d[:, :, 1:-1]) / (
+            self.dy**2
+        )
 
-        residual = (u_tt - c2 * (u_xx + u_yy)) / (self.omega0 ** 2)
+        residual = (u_tt - c2 * (u_xx + u_yy)) / (self.omega0**2)
 
         with torch.no_grad():
             N_int = u_c.shape[1]
             u_flat = u_c.reshape(B * N_int, 1, T)
             energy = torch.nn.functional.avg_pool1d(
-                u_flat.abs(), kernel_size=9, stride=1, padding=4)
+                u_flat.abs(), kernel_size=9, stride=1, padding=4
+            )
             mask = energy / energy.amax(dim=-1, keepdim=True).clamp_min(1e-6)
             mask = mask.view(B, N_int, T)[:, :, 1:-1]
 
@@ -848,13 +969,15 @@ class SpatialAuxiliaryCAE(nn.Module):
 # Utility Functions
 # ============================================================
 
+
 def count_parameters(model: nn.Module) -> int:
     """Count total trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def print_model_summary(model: nn.Module,
-                        B: int = 2, R: int = 25, T: int = 1000) -> None:
+def print_model_summary(
+    model: nn.Module, B: int = 2, R: int = 25, T: int = 1000
+) -> None:
     """Print model architecture summary with a test forward pass."""
     print(f"{'=' * 60}")
     print(f"Model: {model.__class__.__name__}")
@@ -902,7 +1025,8 @@ if __name__ == "__main__":
             idx += 1
 
     denoised, residual = model_old.physics_forward(
-        signals, coords, grid_indices, grid_cols=41, grid_rows=41)
+        signals, coords, grid_indices, grid_cols=41, grid_rows=41
+    )
     print(f"✓ Physics residual shape: {residual.shape}")
 
     # --- Test 2: SpatialAuxiliaryCAE ---
@@ -918,9 +1042,9 @@ if __name__ == "__main__":
     print("✓ SpatialAuxiliaryCAE forward shape passed")
 
     denoised_sac, residual_sac = model_sac.physics_forward(
-        signals, coords, grid_indices, grid_cols=41, grid_rows=41)
+        signals, coords, grid_indices, grid_cols=41, grid_rows=41
+    )
     print(f"✓ Physics residual shape: {residual_sac.shape}")
     print(f"  Residual mean: {residual_sac.mean().item():.6f}")
 
     print("\n✓ All tests passed!")
-

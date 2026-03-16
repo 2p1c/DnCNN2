@@ -105,18 +105,20 @@ class DeepSetsDataset(Dataset):
         # ----------------------------------------------------------
         cols = np.arange(grid_cols)
         rows = np.arange(grid_rows)
-        cc, rr = np.meshgrid(cols, rows, indexing='ij')  # (cols, rows)
+        cc, rr = np.meshgrid(cols, rows, indexing="ij")  # (cols, rows)
         # Flatten in column-major order matching file layout
         self.coords = np.stack(
-            [cc.flatten() / max(grid_cols - 1, 1),
-             rr.flatten() / max(grid_rows - 1, 1)],
-            axis=-1
+            [
+                cc.flatten() / max(grid_cols - 1, 1),
+                rr.flatten() / max(grid_rows - 1, 1),
+            ],
+            axis=-1,
         ).astype(np.float32)  # (n_grid, 2)
 
         # Integer grid indices (col, row) — for spatial diff lookup
-        self.grid_idx = np.stack(
-            [cc.flatten(), rr.flatten()], axis=-1
-        ).astype(np.int64)  # (n_grid, 2)
+        self.grid_idx = np.stack([cc.flatten(), rr.flatten()], axis=-1).astype(
+            np.int64
+        )  # (n_grid, 2)
 
         # ----------------------------------------------------------
         # Build sample index list
@@ -146,23 +148,21 @@ class DeepSetsDataset(Dataset):
             (list_of_noisy, list_of_clean)
             Each list element has shape (n_grid, signal_length).
         """
-        noisy_dir = self.data_dir / 'noisy'
-        clean_dir = self.data_dir / 'clean'
+        noisy_dir = self.data_dir / "noisy"
+        clean_dir = self.data_dir / "clean"
 
         if not noisy_dir.exists() or not clean_dir.exists():
-            raise FileNotFoundError(
-                f"Expected noisy/ and clean/ under {self.data_dir}"
-            )
+            raise FileNotFoundError(f"Expected noisy/ and clean/ under {self.data_dir}")
 
         # Count available files
-        n_files = len(list(noisy_dir.glob('*.npy')))
+        n_files = len(list(noisy_dir.glob("*.npy")))
         n_grids = max(1, n_files // self.n_grid)
         n_to_load = n_grids * self.n_grid
 
         noisy_all = []
         clean_all = []
         for i in range(n_to_load):
-            fname = f'{i:04d}.npy'
+            fname = f"{i:04d}.npy"
             noisy_all.append(np.load(noisy_dir / fname))
             clean_all.append(np.load(clean_dir / fname))
 
@@ -170,15 +170,21 @@ class DeepSetsDataset(Dataset):
         clean_all = np.stack(clean_all, axis=0).astype(np.float32)
 
         # Split into grid-sized blocks
-        grids_noisy = [noisy_all[i * self.n_grid:(i + 1) * self.n_grid]
-                       for i in range(n_grids)]
-        grids_clean = [clean_all[i * self.n_grid:(i + 1) * self.n_grid]
-                       for i in range(n_grids)]
+        grids_noisy = [
+            noisy_all[i * self.n_grid : (i + 1) * self.n_grid] for i in range(n_grids)
+        ]
+        grids_clean = [
+            clean_all[i * self.n_grid : (i + 1) * self.n_grid] for i in range(n_grids)
+        ]
 
-        print(f"[DeepSetsDataset] Loaded {n_to_load} signals "
-              f"({n_grids} grid(s)) from {self.data_dir}")
-        print(f"  Grid: {self.grid_cols}×{self.grid_rows}, "
-              f"Signal length: {self.signal_length}")
+        print(
+            f"[DeepSetsDataset] Loaded {n_to_load} signals "
+            f"({n_grids} grid(s)) from {self.data_dir}"
+        )
+        print(
+            f"  Grid: {self.grid_cols}×{self.grid_rows}, "
+            f"Signal length: {self.signal_length}"
+        )
         return grids_noisy, grids_clean
 
     # ==============================================================
@@ -204,9 +210,11 @@ class DeepSetsDataset(Dataset):
             for cj in range(half, self.grid_rows - half, self.stride):
                 centres.append((ci, cj))
         centres = np.array(centres, dtype=np.int64)
-        print(f"  Patch size: {self.patch_size}×{self.patch_size}, "
-              f"Stride: {self.stride}, "
-              f"Total patches: {len(centres)}")
+        print(
+            f"  Patch size: {self.patch_size}×{self.patch_size}, "
+            f"Stride: {self.stride}, "
+            f"Total patches: {len(centres)}"
+        )
         return centres
 
     # ==============================================================
@@ -229,9 +237,7 @@ class DeepSetsDataset(Dataset):
         indices = []
         for dc in range(-half, half + 1):
             for dr in range(-half, half + 1):
-                indices.append(
-                    self._grid_flat_index(centre_col + dc, centre_row + dr)
-                )
+                indices.append(self._grid_flat_index(centre_col + dc, centre_row + dr))
         return np.array(indices, dtype=np.int64)
 
     # ==============================================================
@@ -264,14 +270,13 @@ class DeepSetsDataset(Dataset):
                 noisy = noisy[:, ::-1].copy()
                 clean = clean[:, ::-1].copy()
             # Small Gaussian jitter on noisy (σ=0.01)
-            noisy = noisy + np.random.normal(
-                0, 0.01, noisy.shape).astype(np.float32)
+            noisy = noisy + np.random.normal(0, 0.01, noisy.shape).astype(np.float32)
 
         sample = {
-            'noisy_signals': torch.from_numpy(noisy),                    # (R, T)
-            'clean_signals': torch.from_numpy(clean),                    # (R, T)
-            'coordinates':   torch.from_numpy(self.coords[flat_idx]),    # (R, 2)
-            'grid_indices':  torch.from_numpy(self.grid_idx[flat_idx]),  # (R, 2)
+            "noisy_signals": torch.from_numpy(noisy),  # (R, T)
+            "clean_signals": torch.from_numpy(clean),  # (R, T)
+            "coordinates": torch.from_numpy(self.coords[flat_idx]),  # (R, 2)
+            "grid_indices": torch.from_numpy(self.grid_idx[flat_idx]),  # (R, 2)
         }
         return sample
 
@@ -280,8 +285,9 @@ class DeepSetsDataset(Dataset):
 # DataLoader Factory
 # ============================================================
 
+
 def create_deepsets_dataloaders(
-    data_root: str = 'data',
+    data_root: str = "data",
     grid_cols: int = 41,
     grid_rows: int = 41,
     patch_size: int = 5,
@@ -311,37 +317,54 @@ def create_deepsets_dataloaders(
         (train_loader, val_loader)
     """
     train_ds = DeepSetsDataset(
-        data_dir=f'{data_root}/train',
-        grid_cols=grid_cols, grid_rows=grid_rows,
-        patch_size=patch_size, stride=stride,
-        dx=dx, dy=dy,
+        data_dir=f"{data_root}/train",
+        grid_cols=grid_cols,
+        grid_rows=grid_rows,
+        patch_size=patch_size,
+        stride=stride,
+        dx=dx,
+        dy=dy,
         augment=augment,
     )
     val_ds = DeepSetsDataset(
-        data_dir=f'{data_root}/val',
-        grid_cols=grid_cols, grid_rows=grid_rows,
-        patch_size=patch_size, stride=stride,
-        dx=dx, dy=dy,
+        data_dir=f"{data_root}/val",
+        grid_cols=grid_cols,
+        grid_rows=grid_rows,
+        patch_size=patch_size,
+        stride=stride,
+        dx=dx,
+        dy=dy,
         augment=False,  # Never augment validation
     )
 
     # Detect if MPS — pin_memory not supported on Apple Silicon
     import torch as _torch
+
     _use_pin = _torch.cuda.is_available()  # only pin for CUDA
 
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=_use_pin,
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=_use_pin,
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=_use_pin,
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=_use_pin,
     )
 
-    print(f"\n[DataLoader] Train: {len(train_ds)} patches, "
-          f"{len(train_loader)} batches (bs={batch_size})")
-    print(f"[DataLoader] Val:   {len(val_ds)} patches, "
-          f"{len(val_loader)} batches (bs={batch_size})")
+    print(
+        f"\n[DataLoader] Train: {len(train_ds)} patches, "
+        f"{len(train_loader)} batches (bs={batch_size})"
+    )
+    print(
+        f"[DataLoader] Val:   {len(val_ds)} patches, "
+        f"{len(val_loader)} batches (bs={batch_size})"
+    )
     return train_loader, val_loader
 
 
@@ -356,7 +379,7 @@ if __name__ == "__main__":
 
     # Try loading validation set (has exactly 1681 files)
     try:
-        ds = DeepSetsDataset('data/val', grid_cols=41, grid_rows=41, patch_size=5)
+        ds = DeepSetsDataset("data/val", grid_cols=41, grid_rows=41, patch_size=5)
         sample = ds[0]
         print(f"\nSample 0:")
         for k, v in sample.items():
