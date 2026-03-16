@@ -9,6 +9,7 @@ Architecture:
 - Regularization: BatchNorm + Dropout + LeakyReLU
 """
 
+import math
 import torch
 import torch.nn as nn
 from typing import Tuple
@@ -146,16 +147,22 @@ class DeepCAE(nn.Module):
 class DeepCAE_PINN(DeepCAE):
     """
     Physics-Informed DeepCAE for ultrasonic signal denoising.
-    
+
     Inherits the full DeepCAE encoder/decoder architecture and adds
-    a physics constraint based on the 1D acoustic wave equation:
-    
-        ∂²u/∂t² = c² · ∂²u/∂x²
-    
-    For a fixed-position receiver, the denoised output u(t) should
-    satisfy smoothness constraints derived from the wave equation.
-    The physics residual (second-order time derivative) is computed
-    via finite differences and penalized during training.
+    a time-domain physics residual tailored to single-sensor ultrasonic
+    traces. Because the current dataset only contains u(t) at one fixed
+    receiver position, spatial derivatives ∂²u/∂x² are not observable.
+
+    Instead of penalizing raw curvature, this model enforces a damped
+    narrowband surrogate equation on the denoised trace:
+
+        u_tt + 2ζω₀ u_t + ω₀² u = 0
+
+    where ω₀ = 2πf₀ is the nominal angular frequency of the ultrasonic
+    transducer and ζ is a small damping ratio. The residual is computed
+    with finite differences, scaled by the true sampling interval dt,
+    normalized by ω₀², and softly masked to focus on energetic parts
+    of the waveform.
     
     Usage:
         - forward(x):         Standard inference (same as DeepCAE)
@@ -166,6 +173,7 @@ class DeepCAE_PINN(DeepCAE):
     SAMPLING_RATE: float = 6.25e6   # 6.25 MHz
     DURATION: float = 160e-6        # 160 μs
     NUM_POINTS: int = 1000          # Total data points
+    CENTER_FREQUENCY: float = 250e3 # 250 kHz nominal transducer frequency
     
     def __init__(
         self,
@@ -174,6 +182,8 @@ class DeepCAE_PINN(DeepCAE):
         kernel_size: int = 7,
         dropout_rate: float = 0.1,
         wave_speed: float = 5900.0,  # Speed of sound in steel (m/s)
+        center_frequency: float = CENTER_FREQUENCY,
+        damping_ratio: float = 0.05,
     ):
         super().__init__(
             in_channels=in_channels,
@@ -181,32 +191,76 @@ class DeepCAE_PINN(DeepCAE):
             kernel_size=kernel_size,
             dropout_rate=dropout_rate,
         )
-        # Time step between consecutive samples
-        self.dt = self.DURATION / self.NUM_POINTS  # 160e-6 / 1000 = 1.6e-7 s
+
+        if wave_speed <= 0:
+            raise ValueError("wave_speed must be positive")
+        if center_frequency <= 0:
+            raise ValueError("center_frequency must be positive")
+        if damping_ratio < 0:
+            raise ValueError("damping_ratio must be non-negative")
+
+        # np.linspace(0, DURATION, NUM_POINTS) implies NUM_POINTS-1 intervals.
+        self.dt = self.DURATION / (self.NUM_POINTS - 1)
         self.wave_speed = wave_speed
-    
-    def compute_wave_equation_residual(self, u: torch.Tensor) -> torch.Tensor:
+        self.center_frequency = center_frequency
+        self.damping_ratio = damping_ratio
+        self.omega0 = 2.0 * math.pi * center_frequency
+        self.wavenumber = self.omega0 / wave_speed
+
+    def _build_signal_mask(self, u: torch.Tensor) -> torch.Tensor:
         """
-        Compute the wave equation physics residual using finite differences.
-        
-        Computes the second-order central difference (proportional to ∂²u/∂t²):
-            Δ²u = u[t+1] - 2·u[t] + u[t-1]
-        
-        We omit the 1/dt² scaling factor to keep the residual in a
-        numerically stable range (dt=1.6e-7 would cause ~1e14 scaling).
-        The physics_weight hyperparameter absorbs this scale.
-        
+        Build a soft activity mask so physics loss focuses on actual echoes.
+
+        A pure PDE residual applied uniformly would over-regularize silent
+        segments. The local absolute amplitude provides a simple, fully
+        differentiable proxy for where the ultrasonic trace contains energy.
+        """
+        local_energy = torch.nn.functional.avg_pool1d(
+            u.abs(),
+            kernel_size=9,
+            stride=1,
+            padding=4,
+        )
+        return local_energy / local_energy.amax(dim=-1, keepdim=True).clamp_min(1e-6)
+
+    def compute_physics_residual(self, u: torch.Tensor) -> torch.Tensor:
+        """
+        Compute a normalized damped-oscillator residual using finite differences.
+
+        Residual definition:
+            r = (u_tt + 2ζω₀ u_t + ω₀² u) / ω₀²
+
+        This is not the full spatial wave equation, but it is a better physics
+        surrogate than an unscaled curvature penalty for single-point ultrasonic
+        traces where only time-domain observations are available.
+
         Args:
             u: Denoised signal tensor of shape (B, 1, T)
-            
+
         Returns:
             Physics residual tensor of shape (B, 1, T-2)
         """
-        # Second-order central finite difference (curvature measure)
-        d2u = u[:, :, 2:] - 2 * u[:, :, 1:-1] + u[:, :, :-2]
-        return d2u
+
+        u_center = u[:, :, 1:-1]
+        u_t = (u[:, :, 2:] - u[:, :, :-2]) / (2.0 * self.dt)
+        u_tt = (u[:, :, 2:] - 2.0 * u_center + u[:, :, :-2]) / (self.dt ** 2)
+
+        residual = (
+            u_tt
+            + 2.0 * self.damping_ratio * self.omega0 * u_t
+            + (self.omega0 ** 2) * u_center
+        ) / (self.omega0 ** 2)
+
+        signal_mask = self._build_signal_mask(u)[:, :, 1:-1]
+        return residual * signal_mask
+
+    def compute_wave_equation_residual(self, u: torch.Tensor) -> torch.Tensor:
+        """
+        Backward-compatible wrapper for older training code.
+        """
+        return self.compute_physics_residual(u)
     
-    def physics_forward(self, x: torch.Tensor) -> tuple:
+    def physics_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass that returns both denoised output and physics residual.
         
@@ -219,13 +273,13 @@ class DeepCAE_PINN(DeepCAE):
         Returns:
             Tuple of:
                 - denoised: Denoised output (B, 1, 1000)
-                - residual: Wave equation residual (B, 1, 998)
+                - residual: Normalized physics residual (B, 1, 998)
         """
         # Standard forward pass (inherited from DeepCAE)
         denoised = self.forward(x)
-        
+
         # Compute physics residual on denoised output
-        residual = self.compute_wave_equation_residual(denoised)
+        residual = self.compute_physics_residual(denoised)
         
         return denoised, residual
 
@@ -261,10 +315,12 @@ def print_model_summary(model: nn.Module, input_size: Tuple[int, ...] = (1, 1, 1
     x = torch.randn(*input_size).to(device)
     
     # Trace through encoder
-    if hasattr(model, 'encoder'):
-        z = model.encoder(x)
-        print(f"Input shape:  {tuple(x.shape)}")
-        print(f"Latent shape: {tuple(z.shape)}")
+    encoder = getattr(model, 'encoder', None)
+    if callable(encoder):
+        z = encoder(x)
+        if isinstance(z, torch.Tensor):
+            print(f"Input shape:  {tuple(x.shape)}")
+            print(f"Latent shape: {tuple(z.shape)}")
     
     # Full forward pass
     y = model(x)

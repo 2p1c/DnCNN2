@@ -10,6 +10,12 @@ Usage:
     uv run python preview_signals.py --snr -10 -6 -3 --noise_intensity 2.0
 """
 
+
+import sys
+from pathlib import Path
+# Add project root to sys.path so modules like model, data_utils can be imported
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt

@@ -42,7 +42,7 @@ uv run python transformer.py --noisy noisy.mat --clean clean.mat --signal_length
 
 ---
 
-## 训练参数 (train.py)
+## 训练参数 (scripts/train/train.py)
 
 | 参数           | 默认值        | 说明                                                       |
 | -------------- | ------------- | ---------------------------------------------------------- |
@@ -67,36 +67,36 @@ uv run python transformer.py --noisy noisy.mat --clean clean.mat --signal_length
 ### 1. 合成数据 - 快速测试
 
 ```bash
-python train.py --model lightweight --epochs 30
+python scripts/train/train.py --model lightweight --epochs 30
 ```
 
 ### 2. 合成数据 - 完整训练
 
 ```bash
-python train.py --model deep --epochs 100 --dropout 0.2
+python scripts/train/train.py --model deep --epochs 100 --dropout 0.2
 ```
 
 ### 3. 实验数据 - 基础训练
 
 ```bash
-python train.py --mode file --data_path ./data --model deep --epochs 100
+python scripts/train/train.py --mode file --data_path ./data --model deep --epochs 100
 ```
 
 ### 4. 实验数据 - 防过拟合 (推荐)
 
 ```bash
-python train.py --mode file --data_path ./data --model deep --epochs 100 --dropout 0.2 --patience 20
+python scripts/train/train.py --mode file --data_path ./data --model deep --epochs 100 --dropout 0.2 --patience 20
 ```
 
 ### 5. 实验数据 - 数据增强
 
 ```bash
-python train.py --mode file --data_path ./data --model deep --epochs 150 --dropout 0.1 --augment
+python scripts/train/train.py --mode file --data_path ./data --model deep --epochs 150 --dropout 0.1 --augment
 ```
 
 ---
 
-## PINN 训练 (train_pinn.py)
+## PINN 训练 (scripts/train/train_pinn.py)
 
 Physics-Informed Neural Network (PINN) 变体，将一维声波方程约束嵌入损失函数：
 
@@ -130,31 +130,31 @@ L_physics = mean(|∂²u/∂t²|²)   — 波动方程残差
 #### 1. 合成数据 - 快速测试
 
 ```bash
-python train_pinn.py --epochs 30
+python scripts/train/train_pinn.py --epochs 30
 ```
 
 #### 2. 合成数据 - 调节物理约束强度
 
 ```bash
-python train_pinn.py --epochs 100 --physics_weight 0.01
+python scripts/train/train_pinn.py --epochs 100 --physics_weight 0.01
 ```
 
 #### 3. 实验数据 - 基础训练
 
 ```bash
-python train_pinn.py --mode file --data_path ./data --epochs 100
+python scripts/train/train_pinn.py --mode file --data_path ./data --epochs 100
 ```
 
 #### 4. 实验数据 - 强物理约束
 
 ```bash
-python train_pinn.py --mode file --data_path ./data --epochs 100 --physics_weight 0.01 --dropout 0.2
+python scripts/train/train_pinn.py --mode file --data_path ./data --epochs 100 --physics_weight 0.01 --dropout 0.2
 ```
 
 #### 5. 自定义声速 (铝材)
 
 ```bash
-python train_pinn.py --mode file --data_path ./data --wave_speed 6320.0
+python scripts/train/train_pinn.py --mode file --data_path ./data --wave_speed 6320.0
 ```
 
 ### PINN 输出文件
@@ -178,7 +178,7 @@ python train_pinn.py --mode file --data_path ./data --wave_speed 6320.0
 
 ---
 
-## 输出文件 (train.py)
+## 输出文件 (scripts/train/train.py)
 
 | 文件                              | 说明                 |
 | --------------------------------- | -------------------- |
@@ -201,7 +201,7 @@ python train_pinn.py --mode file --data_path ./data --wave_speed 6320.0
 
 ---
 
-## 推理 (inference.py)
+## 推理 (scripts/analysis/inference.py)
 
 使用训练好的模型对新数据进行去噪。
 
@@ -226,16 +226,16 @@ python train_pinn.py --mode file --data_path ./data --wave_speed 6320.0
 
 ```bash
 # 基本用法
-python inference.py --input noisy_data.mat --output results/denoised/
+python scripts/analysis/inference.py --input noisy_data.mat --output results/denoised/
 
 # 指定模型和检查点
-python inference.py -i noisy.mat -o results/ -c checkpoints/best_model.pth -m deep
+python scripts/analysis/inference.py -i noisy.mat -o results/ -c checkpoints/best_model.pth -m deep
 
 # 自定义网格尺寸
-python inference.py --input data.mat --cols 21 --rows 21 --target_cols 41 --target_rows 41
+python scripts/analysis/inference.py --input data.mat --cols 21 --rows 21 --target_cols 41 --target_rows 41
 
 # 只保存完整分辨率结果
-python inference.py --input data.mat --output results/ --no_original_size
+python scripts/analysis/inference.py --input data.mat --output results/ --no_original_size
 ```
 1
 ### 输出文件

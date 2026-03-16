@@ -2,18 +2,28 @@
 PINN Training Pipeline for Ultrasonic Signal Denoising
 
 Physics-Informed Neural Network (PINN) variant of the DeepCAE training,
-embedding 1D acoustic wave equation constraint into the loss function:
+embedding a time-domain acoustic residual into the loss function:
 
     L_total = L_data + λ · L_physics
-    
+
     L_data    = MSE(denoised, clean)
-    L_physics = mean(|∂²u/∂t²|²)   — wave equation residual
+    L_physics = mean(|r_phys|²)
+
+where the residual is computed from the damped narrowband surrogate:
+
+    r_phys = (u_tt + 2ζω₀ u_t + ω₀² u) / ω₀²
 
 Usage:
     uv run python train_pinn.py
     uv run python train_pinn.py --mode file --data_path data --physics_weight 0.001
     uv run python train_pinn.py --model deep --epochs 100 --physics_weight 0.01
 """
+
+
+import sys
+from pathlib import Path
+# Add project root to sys.path so modules like model, data_utils can be imported
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 import torch
 import torch.nn as nn
@@ -26,13 +36,13 @@ from tqdm import tqdm
 
 from data_utils import create_dataloaders
 from model import DeepCAE_PINN, count_parameters
-from train import (
+from scripts.train.train import (
     calculate_psnr,
     calculate_snr,
     plot_pre_training_samples,
     plot_results,
 )
-from acoustic_validation import run_acoustic_validation
+from scripts.analysis.acoustic_validation import run_acoustic_validation
 
 
 # ============================================================
@@ -47,7 +57,7 @@ class PINNLoss(nn.Module):
     
     Where:
         L_data    = MSE(denoised, clean)
-        L_physics = mean(|wave_equation_residual|²)
+        L_physics = mean(|physics_residual|²)
     """
     
     def __init__(self, physics_weight: float = 0.001):
@@ -74,8 +84,7 @@ class PINNLoss(nn.Module):
         """
         data_loss = self.data_loss_fn(denoised, clean)
         
-        # Normalize physics residual to avoid scale issues with large d²u/dt²
-        # Use mean squared value of the residual
+        # Residual is already normalized in model.compute_physics_residual().
         physics_loss = torch.mean(physics_residual ** 2)
         
         total_loss = data_loss + self.physics_weight * physics_loss
@@ -258,6 +267,8 @@ def train_pinn(
     # PINN-specific parameters
     physics_weight: float = 0.001,
     wave_speed: float = 5900.0,
+    center_frequency: float = 250e3,
+    damping_ratio: float = 0.05,
 ) -> Tuple[nn.Module, Dict[str, list]]:
     """
     Main PINN training function.
@@ -270,6 +281,8 @@ def train_pinn(
     Args:
         physics_weight: Weight λ for physics loss (higher = stronger constraint)
         wave_speed: Speed of sound in medium (m/s), default 5900 for steel
+        center_frequency: Nominal ultrasonic carrier frequency in Hz
+        damping_ratio: Small damping factor in the surrogate physics equation
         (all other args same as train.train())
         
     Returns:
@@ -329,6 +342,8 @@ def train_pinn(
     model = DeepCAE_PINN(
         dropout_rate=dropout_rate,
         wave_speed=wave_speed,
+        center_frequency=center_frequency,
+        damping_ratio=damping_ratio,
     ).to(device)
     
     print(f"\n[INFO] Using DeepCAE_PINN model (Physics-Informed)")
@@ -336,6 +351,9 @@ def train_pinn(
     print(f"[INFO] Dropout rate: {dropout_rate}")
     print(f"[INFO] Physics weight (λ): {physics_weight}")
     print(f"[INFO] Wave speed: {wave_speed} m/s")
+    print(f"[INFO] Center frequency: {center_frequency / 1e3:.1f} kHz")
+    print(f"[INFO] Damping ratio (ζ): {damping_ratio}")
+    print(f"[INFO] Nominal wavelength: {wave_speed / center_frequency * 1e3:.2f} mm")
     print(f"[INFO] Time step (dt): {model.dt:.2e} s")
     
     # ============================================================
@@ -354,7 +372,7 @@ def train_pinn(
     print(f"[INFO] Optimizer: Adam (lr={learning_rate}, weight_decay=1e-4)")
     print(f"[INFO] Scheduler: CosineAnnealingWarmRestarts (T_0=25)")
     print(f"[INFO] Early Stopping: patience={early_stopping_patience}, min_epochs={min_epochs}")
-    print(f"[INFO] Loss: MSE + {physics_weight} × PhysicsLoss")
+    print(f"[INFO] Loss: MSE + {physics_weight} × PhysicsResidualLoss")
     
     # ============================================================
     # Create Checkpoint Directory
@@ -584,6 +602,10 @@ if __name__ == "__main__":
                         help='Weight λ for physics loss (higher = stronger constraint)')
     parser.add_argument('--wave_speed', type=float, default=5900.0,
                         help='Speed of sound in medium (m/s), 5900 for steel')
+    parser.add_argument('--center_frequency', type=float, default=250e3,
+                        help='Nominal ultrasonic center frequency in Hz')
+    parser.add_argument('--damping_ratio', type=float, default=0.05,
+                        help='Damping ratio ζ for the surrogate physics equation')
     
     args = parser.parse_args()
     
@@ -603,4 +625,6 @@ if __name__ == "__main__":
         augment=args.augment,
         physics_weight=args.physics_weight,
         wave_speed=args.wave_speed,
+        center_frequency=args.center_frequency,
+        damping_ratio=args.damping_ratio,
     )

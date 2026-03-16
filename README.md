@@ -28,7 +28,7 @@ Based on the paper: *"Ultrasonic signal noise reduction based on convolutional a
 uv sync
 
 # Run training (50 epochs)
-uv run python train.py
+uv run python scripts/train/train.py
 ```
 
 ## Output Files
@@ -41,12 +41,13 @@ After training, you'll find:
 
 ## Project Structure
 
-```
 DnCNN2/
 ├── pyproject.toml      # Project configuration
 ├── data_utils.py       # Dataset and data generation
 ├── model.py            # CAE model architecture
-├── train.py            # Training pipeline
+├── scripts/
+│   ├── train/          # Training pipelines
+│   └── analysis/       # Inference and acoustic feature validation
 └── README.md           # This file
 ```
 

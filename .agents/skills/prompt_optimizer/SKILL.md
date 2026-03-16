@@ -5,7 +5,7 @@ description: Optimizes programming prompts using the Antigravity Framework to el
 
 # Prompt Optimizer Skill
 
-This skill transforms standard programming requests into "Master Prompts" that enforce the Antigravity Framework's principles: Minimalism, High-Speed Iteration, and Autonomous Logic.
+This skill transforms standard programming requests into "Master Prompts" that enforce the Antigravity Framework's principles: Minimalism, High-Speed Iteration, and Autonomous Logic.决不允许歪曲用户本来的意图。
 
 ## Usage
 
