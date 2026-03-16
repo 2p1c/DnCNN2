@@ -403,6 +403,7 @@ def run_inference(
     batch_size: int = 64,
     save_original_size: bool = True,
     target_signal_length: int = 1000,
+    validation_save_path: Optional[str] = None,
 ) -> str:
     """
     Main inference pipeline.
@@ -460,7 +461,8 @@ def run_inference(
     # Save results
     output_dir = Path(output_path)
     output_dir.mkdir(parents=True, exist_ok=True)
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    image_dir = output_dir / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -468,7 +470,10 @@ def run_inference(
     print("\n" + "=" * 60)
     print("[INFO] Running acoustic feature validation...")
     print("=" * 60)
-    validation_fig = str(IMAGES_DIR / f"acoustic_validation_{timestamp}.png")
+    if validation_save_path:
+        validation_fig = validation_save_path
+    else:
+        validation_fig = str(image_dir / f"acoustic_validation_{timestamp}.png")
     run_inference_validation(
         input_signals=normalized_signals,
         denoised_signals=denoised_normalized,

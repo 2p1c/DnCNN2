@@ -60,6 +60,15 @@ def _ensure_parent_dir(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _resolve_image_dir(checkpoint_dir: str) -> Path:
+    """Resolve image output directory from checkpoint directory."""
+    ckpt_path = Path(checkpoint_dir)
+    # Unified pipeline passes <run_dir>/checkpoints. Keep standalone compatibility.
+    if ckpt_path.name == "checkpoints":
+        return ckpt_path.parent / "images"
+    return RESULTS_DIR / "images"
+
+
 # ============================================================
 # PINN Loss Function
 # ============================================================
@@ -423,6 +432,11 @@ def train_pinn(
     # ============================================================
     checkpoint_path = Path(checkpoint_dir)
     checkpoint_path.mkdir(parents=True, exist_ok=True)
+    image_dir = _resolve_image_dir(checkpoint_dir)
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_image_path(filename: str) -> str:
+        return str(image_dir / filename)
 
     # ============================================================
     # Pre-Training Visualization
@@ -431,7 +445,7 @@ def train_pinn(
     print("[INFO] Generating pre-training samples visualization...")
     print("=" * 60)
     plot_pre_training_samples(
-        train_loader, _image_path("fig_pinn_pre_train_samples.png")
+        train_loader, run_image_path("fig_pinn_pre_train_samples.png")
     )
 
     # ============================================================
@@ -570,12 +584,12 @@ def train_pinn(
         model,
         val_loader,
         device,
-        _image_path("fig_pinn_results.png"),
+        run_image_path("fig_pinn_results.png"),
         train_config=train_config,
     )
 
     # PINN-specific training curves (includes physics loss)
-    plot_pinn_training_curves(history, _image_path("fig_pinn_training_curves.png"))
+    plot_pinn_training_curves(history, run_image_path("fig_pinn_training_curves.png"))
 
     # Acoustic feature validation (声学特征验证)
     print("\n" + "=" * 60)
@@ -585,7 +599,7 @@ def train_pinn(
         model,
         val_loader,
         device,
-        save_path=_image_path("fig_pinn_acoustic_validation.png"),
+        save_path=run_image_path("fig_pinn_acoustic_validation.png"),
     )
 
     # ============================================================
@@ -599,10 +613,10 @@ def train_pinn(
     print(f"  → Final physics loss: {history['train_physics_loss'][-1]:.2e}")
     print(f"  → Physics weight (λ): {physics_weight}")
     print(f"  → Figures saved:")
-    print(f"      - {_image_path('fig_pinn_pre_train_samples.png')}")
-    print(f"      - {_image_path('fig_pinn_results.png')}")
-    print(f"      - {_image_path('fig_pinn_training_curves.png')}")
-    print(f"      - {_image_path('fig_pinn_acoustic_validation.png')}")
+    print(f"      - {run_image_path('fig_pinn_pre_train_samples.png')}")
+    print(f"      - {run_image_path('fig_pinn_results.png')}")
+    print(f"      - {run_image_path('fig_pinn_training_curves.png')}")
+    print(f"      - {run_image_path('fig_pinn_acoustic_validation.png')}")
     print(f"  → Model checkpoint: {checkpoint_path / 'best_pinn_model.pth'}")
 
     return model, history

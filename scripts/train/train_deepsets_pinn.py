@@ -48,6 +48,15 @@ def _ensure_parent_dir(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _resolve_image_dir(checkpoint_dir: str) -> Path:
+    """Resolve image output directory from checkpoint directory."""
+    ckpt_path = Path(checkpoint_dir)
+    # Unified pipeline passes <run_dir>/checkpoints. Keep standalone compatibility.
+    if ckpt_path.name == "checkpoints":
+        return ckpt_path.parent / "images"
+    return RESULTS_DIR / "images"
+
+
 # ============================================================
 # PSNR Calculation (adapted from train.py)
 # ============================================================
@@ -526,6 +535,11 @@ def train_deepsets_pinn(
     # Checkpoint directory
     ckpt_path = Path(checkpoint_dir)
     ckpt_path.mkdir(parents=True, exist_ok=True)
+    image_dir = _resolve_image_dir(checkpoint_dir)
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_image_path(filename: str) -> str:
+        return str(image_dir / filename)
 
     # ============================================================
     # Training Loop
@@ -648,9 +662,9 @@ def train_deepsets_pinn(
     print("[INFO] Generating post-training visualisations...")
     print("=" * 60)
 
-    plot_training_curves(history, _image_path("fig_deepsets_pinn_training_curves.png"))
+    plot_training_curves(history, run_image_path("fig_deepsets_pinn_training_curves.png"))
     plot_sample_results(
-        model, val_loader, device, _image_path("fig_deepsets_pinn_results.png")
+        model, val_loader, device, run_image_path("fig_deepsets_pinn_results.png")
     )
 
     # ============================================================
@@ -664,8 +678,8 @@ def train_deepsets_pinn(
     print(f"  → Final physics loss: {history['train_physics_loss'][-1]:.2e}")
     print(f"  → Physics weight (λ): {physics_weight}")
     print(f"  → Figures:")
-    print(f"      - {_image_path('fig_deepsets_pinn_training_curves.png')}")
-    print(f"      - {_image_path('fig_deepsets_pinn_results.png')}")
+    print(f"      - {run_image_path('fig_deepsets_pinn_training_curves.png')}")
+    print(f"      - {run_image_path('fig_deepsets_pinn_results.png')}")
     print(f"  → Checkpoint: {best_path}")
 
     return model, history

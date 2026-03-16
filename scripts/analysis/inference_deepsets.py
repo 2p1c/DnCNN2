@@ -329,6 +329,7 @@ def run_inference(
     patch_size: int = 5,
     interpolation_method: str = "cubic",
     target_signal_length: int = 1000,
+    validation_save_path: str | None = None,
 ) -> str:
     """
     Full inference pipeline for DeepSets PINN.
@@ -384,13 +385,17 @@ def run_inference(
     # Save
     out_dir = Path(output_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    image_dir = out_dir / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     print("\n" + "=" * 60)
     print("[INFO] Running acoustic feature validation...")
     print("=" * 60)
-    validation_fig = str(IMAGES_DIR / f"acoustic_validation_deepsets_{timestamp}.png")
+    if validation_save_path:
+        validation_fig = validation_save_path
+    else:
+        validation_fig = str(image_dir / f"acoustic_validation_deepsets_{timestamp}.png")
     run_inference_validation(
         input_signals=normalised,
         denoised_signals=denoised_norm,

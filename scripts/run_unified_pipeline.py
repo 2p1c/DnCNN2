@@ -123,6 +123,14 @@ def _write_experiment_record(
     return record_path
 
 
+def _create_run_output_dir(results_dir: str) -> tuple[Path, str]:
+    """Create a timestamped run directory under results root."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(results_dir) / timestamp
+    run_dir.mkdir(parents=True, exist_ok=False)
+    return run_dir, timestamp
+
+
 def _validate_existing_file(path_str: str | None, arg_name: str) -> Path:
     """Validate an input file path and return a resolved Path."""
     if not path_str:
@@ -296,9 +304,13 @@ def main() -> None:
     else:
         _validate_dataset_dir(args.data_dir)
 
-    results_dir = Path(args.results_dir)
-    checkpoints_dir = results_dir / "checkpoints"
+    results_root = Path(args.results_dir)
+    run_dir, run_timestamp = _create_run_output_dir(args.results_dir)
+    checkpoints_dir = run_dir / "checkpoints"
+    images_dir = run_dir / "images"
+    experiment_dir = run_dir / "experiments"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    images_dir.mkdir(parents=True, exist_ok=True)
 
     physics_weight = args.physics_weight
     if physics_weight is None:
@@ -331,6 +343,7 @@ def main() -> None:
     print(f"[CONFIG] pipeline={args.pipeline}")
     print(f"[CONFIG] data_dir={args.data_dir}")
     print(f"[CONFIG] results_dir={args.results_dir}")
+    print(f"[CONFIG] run_dir={run_dir}")
     print(f"[CONFIG] epochs={args.epochs}, batch_size={args.batch_size}, lr={args.lr}")
     print(f"[CONFIG] physics_weight={physics_weight}")
     print(
@@ -409,21 +422,24 @@ def main() -> None:
     else:
         print("\n[STAGE 2/3] Model training skipped")
 
+    checkpoint_name = (
+        "best_pinn_model.pth" if args.pipeline == "pinn" else "best_deepsets_pinn.pth"
+    )
     if args.checkpoint:
         checkpoint_path = args.checkpoint
+    elif args.skip_train:
+        checkpoint_path = str(results_root / "checkpoints" / checkpoint_name)
     else:
-        checkpoint_name = (
-            "best_pinn_model.pth"
-            if args.pipeline == "pinn"
-            else "best_deepsets_pinn.pth"
-        )
         checkpoint_path = str(checkpoints_dir / checkpoint_name)
+
+    _validate_existing_file(checkpoint_path, "checkpoint")
 
     print("\n[STAGE 3/3] Inference")
     if args.pipeline == "pinn":
+        val_fig = str(images_dir / f"acoustic_validation_{run_timestamp}.png")
         output_mat = run_pinn_inference(
             input_path=args.inference_input,
-            output_path=args.results_dir,
+            output_path=str(run_dir),
             checkpoint_path=checkpoint_path,
             model_type="deep",
             grid_cols=inference_input_cols,
@@ -434,11 +450,13 @@ def main() -> None:
             batch_size=args.inference_batch_size,
             save_original_size=True,
             target_signal_length=args.signal_length,
+            validation_save_path=val_fig,
         )
     else:
+        val_fig = str(images_dir / f"acoustic_validation_deepsets_{run_timestamp}.png")
         output_mat = run_deepsets_inference(
             input_path=args.inference_input,
-            output_path=args.results_dir,
+            output_path=str(run_dir),
             checkpoint_path=checkpoint_path,
             grid_cols=inference_input_cols,
             grid_rows=inference_input_rows,
@@ -447,10 +465,10 @@ def main() -> None:
             patch_size=args.patch_size,
             interpolation_method=args.interp_method,
             target_signal_length=args.signal_length,
+            validation_save_path=val_fig,
         )
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    val_fig = "generated during inference stage"
+    ts = run_timestamp
 
     print("\n" + "=" * 70)
     print("Pipeline finished successfully")
@@ -458,10 +476,11 @@ def main() -> None:
     print(f"[RESULT] checkpoint: {checkpoint_path}")
     print(f"[RESULT] denoised mat: {output_mat}")
     print(f"[RESULT] acoustic validation figure: {val_fig}")
+    print(f"[RESULT] run directory: {run_dir}")
 
     if args.log_experiment:
         record_path = _write_experiment_record(
-            experiment_dir=Path(args.experiment_dir),
+            experiment_dir=experiment_dir,
             timestamp=ts,
             args=args,
             physics_weight=physics_weight,
