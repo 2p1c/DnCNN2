@@ -18,114 +18,168 @@ from typing import Tuple
 class DeepCAE(nn.Module):
     """
     Deep CAE with 5 encoder/decoder layers.
-    
+
     Best for complex signal denoising tasks where deeper networks perform better.
     Uses LeakyReLU for better gradient flow.
-    
+
     Architecture: 5 encoder + 5 decoder layers
     Input: (B, 1, 1000) → Latent: (B, 192, 32) → Output: (B, 1, 1000)
     """
-    
+
     def __init__(
         self,
         in_channels: int = 1,
         base_channels: int = 32,  # Restore wider channels for capacity
-        kernel_size: int = 7,     # Larger kernel for better context
-        dropout_rate: float = 0.1  # Much lower dropout - 0.4 was too aggressive!
+        kernel_size: int = 7,  # Larger kernel for better context
+        dropout_rate: float = 0.1,  # Much lower dropout - 0.4 was too aggressive!
     ):
         super().__init__()
-        
+
         padding = kernel_size // 2
         self.dropout_rate = dropout_rate
-        
+
         # Encoder: (B, 1, 1000) → (B, 256, 32)
         # Only use dropout in middle layers, not all layers
         self.enc1 = nn.Sequential(
-            nn.Conv1d(in_channels, base_channels, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                in_channels, base_channels, kernel_size, stride=2, padding=padding
+            ),
             nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.1, inplace=True),
             # No dropout in first layer - preserve input information
         )  # 1000 → 500
-        
+
         self.enc2 = nn.Sequential(
-            nn.Conv1d(base_channels, base_channels * 2, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels, base_channels * 2, kernel_size, stride=2, padding=padding
+            ),
             nn.BatchNorm1d(base_channels * 2),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),  # Use regular Dropout, not Dropout1d
         )  # 500 → 250
-        
+
         self.enc3 = nn.Sequential(
-            nn.Conv1d(base_channels * 2, base_channels * 4, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 2,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 4),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 250 → 125
-        
+
         self.enc4 = nn.Sequential(
-            nn.Conv1d(base_channels * 4, base_channels * 8, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 4,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 125 → 63
-        
+
         self.enc5 = nn.Sequential(
-            nn.Conv1d(base_channels * 8, base_channels * 8, kernel_size, stride=2, padding=padding),
+            nn.Conv1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
             # No dropout at bottleneck
         )  # 63 → 32
-        
+
         # Decoder: (B, 256, 32) → (B, 1, 1000)
         self.dec5 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 8, base_channels * 8, kernel_size,
-                              stride=2, padding=padding, output_padding=0),
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
             nn.BatchNorm1d(base_channels * 8),
             nn.LeakyReLU(0.1, inplace=True),
             # No dropout right after bottleneck
         )  # 32 → 63
-        
+
         self.dec4 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 8, base_channels * 4, kernel_size,
-                              stride=2, padding=padding, output_padding=0),
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
             nn.BatchNorm1d(base_channels * 4),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 63 → 125
-        
+
         self.dec3 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 4, base_channels * 2, kernel_size,
-                              stride=2, padding=padding, output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels * 4,
+                base_channels * 2,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.BatchNorm1d(base_channels * 2),
             nn.LeakyReLU(0.1, inplace=True),
             nn.Dropout(dropout_rate),
         )  # 125 → 250
-        
+
         self.dec2 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels * 2, base_channels, kernel_size,
-                              stride=2, padding=padding, output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels * 2,
+                base_channels,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.1, inplace=True),
             # No dropout near output
         )  # 250 → 500
-        
+
         self.dec1 = nn.Sequential(
-            nn.ConvTranspose1d(base_channels, in_channels, kernel_size,
-                              stride=2, padding=padding, output_padding=1),
+            nn.ConvTranspose1d(
+                base_channels,
+                in_channels,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
             nn.Tanh(),
         )  # 500 → 1000
-        
+
         self._initialize_weights()
-        
+
     def _initialize_weights(self) -> None:
         for m in self.modules():
             if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_out", nonlinearity="leaky_relu"
+                )
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Encoder
         e1 = self.enc1(x)
@@ -133,14 +187,14 @@ class DeepCAE(nn.Module):
         e3 = self.enc3(e2)
         e4 = self.enc4(e3)
         e5 = self.enc5(e4)
-        
+
         # Decoder
         d5 = self.dec5(e5)
         d4 = self.dec4(d5)
         d3 = self.dec3(d4)
         d2 = self.dec2(d3)
         d1 = self.dec1(d2)
-        
+
         return d1
 
 
@@ -163,18 +217,18 @@ class DeepCAE_PINN(DeepCAE):
     with finite differences, scaled by the true sampling interval dt,
     normalized by ω₀², and softly masked to focus on energetic parts
     of the waveform.
-    
+
     Usage:
         - forward(x):         Standard inference (same as DeepCAE)
         - physics_forward(x): Returns (denoised, physics_residual) for PINN training
     """
-    
+
     # Physical constants for ultrasonic NDT
-    SAMPLING_RATE: float = 6.25e6   # 6.25 MHz
-    DURATION: float = 160e-6        # 160 μs
-    NUM_POINTS: int = 1000          # Total data points
-    CENTER_FREQUENCY: float = 250e3 # 250 kHz nominal transducer frequency
-    
+    SAMPLING_RATE: float = 6.25e6  # 6.25 MHz
+    DURATION: float = 160e-6  # 160 μs
+    NUM_POINTS: int = 1000  # Total data points
+    CENTER_FREQUENCY: float = 250e3  # 250 kHz nominal transducer frequency
+
     def __init__(
         self,
         in_channels: int = 1,
@@ -243,13 +297,13 @@ class DeepCAE_PINN(DeepCAE):
 
         u_center = u[:, :, 1:-1]
         u_t = (u[:, :, 2:] - u[:, :, :-2]) / (2.0 * self.dt)
-        u_tt = (u[:, :, 2:] - 2.0 * u_center + u[:, :, :-2]) / (self.dt ** 2)
+        u_tt = (u[:, :, 2:] - 2.0 * u_center + u[:, :, :-2]) / (self.dt**2)
 
         residual = (
             u_tt
             + 2.0 * self.damping_ratio * self.omega0 * u_t
-            + (self.omega0 ** 2) * u_center
-        ) / (self.omega0 ** 2)
+            + (self.omega0**2) * u_center
+        ) / (self.omega0**2)
 
         signal_mask = self._build_signal_mask(u)[:, :, 1:-1]
         return residual * signal_mask
@@ -259,17 +313,17 @@ class DeepCAE_PINN(DeepCAE):
         Backward-compatible wrapper for older training code.
         """
         return self.compute_physics_residual(u)
-    
+
     def physics_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass that returns both denoised output and physics residual.
-        
+
         Used during PINN training to compute combined loss:
             L = L_data(denoised, clean) + λ · L_physics(residual)
-        
+
         Args:
             x: Noisy input tensor of shape (B, 1, 1000)
-            
+
         Returns:
             Tuple of:
                 - denoised: Denoised output (B, 1, 1000)
@@ -280,52 +334,54 @@ class DeepCAE_PINN(DeepCAE):
 
         # Compute physics residual on denoised output
         residual = self.compute_physics_residual(denoised)
-        
+
         return denoised, residual
 
 
 def count_parameters(model: nn.Module) -> int:
     """
     Count total trainable parameters in a model.
-    
+
     Args:
         model: PyTorch model
-        
+
     Returns:
         Number of trainable parameters
     """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def print_model_summary(model: nn.Module, input_size: Tuple[int, ...] = (1, 1, 1000)) -> None:
+def print_model_summary(
+    model: nn.Module, input_size: Tuple[int, ...] = (1, 1, 1000)
+) -> None:
     """
     Print a summary of the model architecture.
-    
+
     Args:
         model: PyTorch model
         input_size: Input tensor size (batch, channels, length)
     """
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Model: {model.__class__.__name__}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Total parameters: {count_parameters(model):,}")
-    
+
     # Test forward pass
     device = next(model.parameters()).device
     x = torch.randn(*input_size).to(device)
-    
+
     # Trace through encoder
-    encoder = getattr(model, 'encoder', None)
+    encoder = getattr(model, "encoder", None)
     if callable(encoder):
         z = encoder(x)
         if isinstance(z, torch.Tensor):
             print(f"Input shape:  {tuple(x.shape)}")
             print(f"Latent shape: {tuple(z.shape)}")
-    
+
     # Full forward pass
     y = model(x)
     print(f"Output shape: {tuple(y.shape)}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":
@@ -333,7 +389,7 @@ if __name__ == "__main__":
     print("Testing DeepCAE...")
     model = DeepCAE()
     print_model_summary(model)
-    
+
     # Verify input/output shapes match
     x = torch.randn(4, 1, 1000)
     y = model(x)
