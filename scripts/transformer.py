@@ -137,6 +137,19 @@ def interpolate_spatial(
     """
     n_cols_small, n_rows_small, signal_length = grid_small.shape
 
+    # Fast path: no spatial resize needed.
+    # When source and target grids are identical, interpolation is a no-op.
+    # Bypassing the interpolator avoids potential numerical artifacts on
+    # ultra-small amplitude signals and preserves values exactly.
+    if n_cols_small == target_cols and n_rows_small == target_rows:
+        print(
+            f"[INFO] Interpolating from {n_cols_small}x{n_rows_small} to {target_cols}x{target_rows} using '{method}' method..."
+        )
+        print("[INFO] Source and target grid sizes are identical; skipping interpolation.")
+        grid_large = grid_small.astype(np.float64, copy=True)
+        print(f"  Interpolation complete. Output shape: {grid_large.shape}")
+        return grid_large
+
     # Check signal amplitude to determine best interpolation method
     signal_amplitude = grid_small.max() - grid_small.min()
     small_signal_threshold = 1e-9  # Signals below this should use linear interpolation
