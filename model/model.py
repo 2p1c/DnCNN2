@@ -29,7 +29,7 @@ class DeepCAE(nn.Module):
     def __init__(
         self,
         in_channels: int = 1,
-        base_channels: int = 32,  # Restore wider channels for capacity
+        base_channels: int = 4,  # Restore wider channels for capacity
         kernel_size: int = 7,  # Larger kernel for better context
         dropout_rate: float = 0.1,  # Much lower dropout - 0.4 was too aggressive!
     ):
@@ -196,6 +196,96 @@ class DeepCAE(nn.Module):
         d1 = self.dec1(d2)
 
         return d1
+
+
+class UnsupervisedDeepCAE(DeepCAE):
+    """
+    Unsupervised autoencoder variant with the same architecture as DeepCAE.
+
+    This model reuses the exact encoder-decoder structure from DeepCAE and is
+    intended for reconstruction-style training where the target is the input
+    itself (x -> x), i.e., no clean label is required for the optimization
+    objective.
+
+    Compared with DeepCAE, this variant uses an additional channel bottleneck
+    at the latent stage (after enc5) to further reduce representation capacity,
+    which is useful for stronger compression-style denoising in unsupervised
+    reconstruction.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        base_channels: int = 32,
+        kernel_size: int = 7,
+        dropout_rate: float = 0.1,
+        bottleneck_channels: int = 2,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            base_channels=base_channels,
+            kernel_size=kernel_size,
+            dropout_rate=dropout_rate,
+        )
+
+        latent_channels = base_channels * 8
+        if bottleneck_channels <= 0:
+            raise ValueError("bottleneck_channels must be positive")
+        if bottleneck_channels >= latent_channels:
+            raise ValueError(
+                "bottleneck_channels must be smaller than latent channels "
+                f"({latent_channels})"
+            )
+
+        self.bottleneck_channels = bottleneck_channels
+        self.bottleneck_compress = nn.Sequential(
+            nn.Conv1d(latent_channels, bottleneck_channels, kernel_size=1),
+            nn.BatchNorm1d(bottleneck_channels),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+        self.bottleneck_expand = nn.Sequential(
+            nn.Conv1d(bottleneck_channels, latent_channels, kernel_size=1),
+            nn.BatchNorm1d(latent_channels),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self._initialize_unsupervised_bottleneck()
+
+    def _initialize_unsupervised_bottleneck(self) -> None:
+        for module in (self.bottleneck_compress, self.bottleneck_expand):
+            for layer in module.modules():
+                if isinstance(layer, nn.Conv1d):
+                    nn.init.kaiming_normal_(
+                        layer.weight, mode="fan_out", nonlinearity="leaky_relu"
+                    )
+                    if layer.bias is not None:
+                        nn.init.constant_(layer.bias, 0)
+                elif isinstance(layer, nn.BatchNorm1d):
+                    nn.init.constant_(layer.weight, 1)
+                    nn.init.constant_(layer.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        e1 = self.enc1(x)
+        e2 = self.enc2(e1)
+        e3 = self.enc3(e2)
+        e4 = self.enc4(e3)
+        e5 = self.enc5(e4)
+
+        compressed = self.bottleneck_compress(e5)
+        expanded = self.bottleneck_expand(compressed)
+
+        d5 = self.dec5(expanded)
+        d4 = self.dec4(d5)
+        d3 = self.dec3(d4)
+        d2 = self.dec2(d3)
+        d1 = self.dec1(d2)
+
+        return d1
+
+
+# Backward-compatible aliases used by scripts/train/train.py.
+LightweightCAE = DeepCAE
+DeeperCAE = DeepCAE
 
 
 class DeepCAE_PINN(DeepCAE):

@@ -38,10 +38,9 @@ from data import create_dataloaders
 from model.model import DeepCAE_PINN, count_parameters
 from scripts.train.train import (
     calculate_psnr,
-    calculate_snr,
     plot_pre_training_samples,
-    plot_results,
 )
+from scripts.train.visualization import plot_results
 from scripts.analysis.acoustic_validation import run_acoustic_validation
 
 
@@ -308,7 +307,7 @@ def train_pinn(
     num_val: int = 1000,
     save_best: bool = True,
     checkpoint_dir: str = str(CHECKPOINTS_DIR),
-    seed: int = 42,
+    seed: int = -1,
     data_mode: str = "synthetic",
     data_path: str = None,
     early_stopping_patience: int = 50,

@@ -37,7 +37,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Optional
 
-from model.model import DeepCAE
+from model.model import DeepCAE, DeeperCAE, LightweightCAE, UnsupervisedDeepCAE
 from scripts.transformer import (
     load_mat_file,
     reshape_to_grid,
@@ -47,11 +47,18 @@ from scripts.transformer import (
     truncate_signals,
 )
 from scripts.analysis.acoustic_validation import run_inference_validation
+from scripts.train.visualization import plot_inference_comparison
 
 
 RESULTS_DIR = Path("results")
 IMAGES_DIR = RESULTS_DIR / "images"
 CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
+TRAIN_SIGNAL_LENGTH = 1000
+
+
+def _ensure_parent_dir(path: str) -> None:
+    """Create parent directory for an output file path if needed."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_model(
@@ -62,7 +69,7 @@ def load_model(
 
     Args:
         checkpoint_path: Path to model checkpoint (.pth file)
-        model_type: Model architecture ('lightweight', 'deeper', 'deep')
+        model_type: Model architecture ('lightweight', 'deeper', 'deep', 'unsupervised_deep')
         device: Device to load model on
 
     Returns:
@@ -76,18 +83,6 @@ def load_model(
         else:
             device = torch.device("cpu")
 
-    print(f"[INFO] Loading model from {checkpoint_path}")
-    print(f"[INFO] Model type: {model_type}")
-    print(f"[INFO] Device: {device}")
-
-    # Initialize model based on type
-    if model_type == "deep":
-        model = DeepCAE(dropout_rate=0.0)  # No dropout for inference
-    elif model_type == "deeper":
-        model = DeeperCAE(dropout_rate=0.0)
-    else:
-        model = LightweightCAE(dropout_rate=0.0)
-
     # Load checkpoint
     # Note: weights_only=False is needed for checkpoints saved with additional metadata
     # This is safe as long as the checkpoint comes from a trusted source
@@ -95,14 +90,78 @@ def load_model(
 
     # Handle different checkpoint formats
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
+        state_dict = checkpoint["model_state_dict"]
     else:
-        model.load_state_dict(checkpoint)
+        state_dict = checkpoint
+
+    if not isinstance(state_dict, dict):
+        raise ValueError("Invalid checkpoint format: state_dict is not a dictionary")
+
+    enc1_weight = state_dict.get("enc1.0.weight")
+    if enc1_weight is None:
+        raise ValueError(
+            "Checkpoint missing key 'enc1.0.weight'; cannot infer model channels"
+        )
+
+    base_channels = int(enc1_weight.shape[0])
+
+    has_unsupervised_bottleneck = any(
+        key.startswith("bottleneck_compress.") or key.startswith("bottleneck_expand.")
+        for key in state_dict.keys()
+    )
+    checkpoint_unsupervised_flag = bool(checkpoint.get("unsupervised", False)) if isinstance(checkpoint, dict) else False
+
+    resolved_model_type = model_type
+    if has_unsupervised_bottleneck or checkpoint_unsupervised_flag:
+        resolved_model_type = "unsupervised_deep"
+        if model_type != "unsupervised_deep":
+            print(
+                "[WARNING] Checkpoint indicates unsupervised bottleneck architecture; "
+                "overriding --model to 'unsupervised_deep'."
+            )
+
+    print(f"[INFO] Loading model from {checkpoint_path}")
+    print(f"[INFO] Requested model type: {model_type}")
+    print(f"[INFO] Resolved model type: {resolved_model_type}")
+    print(f"[INFO] Inferred base_channels from checkpoint: {base_channels}")
+    print(f"[INFO] Device: {device}")
+
+    # Initialize model based on resolved type and inferred channels
+    if resolved_model_type == "unsupervised_deep":
+        bottleneck_weight = state_dict.get("bottleneck_compress.0.weight")
+        if bottleneck_weight is None:
+            raise ValueError(
+                "Checkpoint indicates unsupervised model, but missing "
+                "'bottleneck_compress.0.weight'"
+            )
+        bottleneck_channels = int(bottleneck_weight.shape[0])
+        print(
+            "[INFO] Inferred bottleneck_channels from checkpoint: "
+            f"{bottleneck_channels}"
+        )
+        model = UnsupervisedDeepCAE(
+            base_channels=base_channels,
+            dropout_rate=0.0,
+            bottleneck_channels=bottleneck_channels,
+        )
+    elif resolved_model_type == "deep":
+        model = DeepCAE(base_channels=base_channels, dropout_rate=0.0)
+    elif resolved_model_type == "deeper":
+        model = DeeperCAE(base_channels=base_channels, dropout_rate=0.0)
+    elif resolved_model_type == "lightweight":
+        model = LightweightCAE(base_channels=base_channels, dropout_rate=0.0)
+    else:
+        raise ValueError(
+            "Unsupported model_type: "
+            f"{resolved_model_type}. Choose from lightweight/deeper/deep/unsupervised_deep"
+        )
+
+    model.load_state_dict(state_dict)
 
     model.to(device)
     model.eval()
 
-    print(f"[INFO] Model loaded successfully!")
+    print("[INFO] Model loaded successfully!")
     return model
 
 
@@ -113,7 +172,7 @@ def preprocess_mat_data(
     target_cols: int = 41,
     target_rows: int = 41,
     interpolation_method: str = "cubic",
-    target_signal_length: int = 1000,
+    target_signal_length: int = TRAIN_SIGNAL_LENGTH,
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """
     Preprocess .mat file data for inference.
@@ -143,6 +202,13 @@ def preprocess_mat_data(
     time_vector, signal_data = truncate_signals(
         time_vector, signal_data, target_signal_length
     )
+
+    if signal_data.shape[1] != target_signal_length:
+        raise ValueError(
+            "Signal length mismatch after preprocessing: "
+            f"got {signal_data.shape[1]}, expected {target_signal_length}. "
+            "Please provide data with the same signal length as training."
+        )
 
     # Store original data info for reconstruction
     metadata = {
@@ -402,7 +468,7 @@ def run_inference(
     interpolation_method: str = "cubic",
     batch_size: int = 64,
     save_original_size: bool = True,
-    target_signal_length: int = 1000,
+    target_signal_length: int = TRAIN_SIGNAL_LENGTH,
     validation_save_path: Optional[str] = None,
 ) -> str:
     """
@@ -463,6 +529,16 @@ def run_inference(
     output_dir.mkdir(parents=True, exist_ok=True)
     image_dir = output_dir / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
+
+    comparison_fig = str(
+        image_dir
+        / (
+            "fig_unsupervised_inferenced.png"
+            if model_type == "unsupervised_deep"
+            else "fig_inferenced.png"
+        )
+    )
+    plot_inference_comparison(original_signals, denoised, comparison_fig)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -563,7 +639,7 @@ def main():
         "-m",
         type=str,
         default="deep",
-        choices=["lightweight", "deeper", "deep"],
+        choices=["lightweight", "deeper", "deep", "unsupervised_deep"],
         help="Model architecture",
     )
 
@@ -600,11 +676,16 @@ def main():
     parser.add_argument(
         "--signal_length",
         type=int,
-        default=1000,
+        default=TRAIN_SIGNAL_LENGTH,
         help="Target signal length (truncate if longer)",
     )
 
     args = parser.parse_args()
+
+    if args.signal_length != TRAIN_SIGNAL_LENGTH:
+        raise ValueError(
+            f"--signal_length must be {TRAIN_SIGNAL_LENGTH} to match training tensor size"
+        )
 
     run_inference(
         input_path=args.input,

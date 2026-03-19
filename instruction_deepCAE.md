@@ -48,7 +48,7 @@ uv run python scripts/transformer.py --noisy noisy.mat --clean clean.mat --signa
 | -------------- | ------------- | ---------------------------------------------------------- |
 | `--mode`       | `synthetic`   | 数据模式：`synthetic`(合成) / `file`(文件)                 |
 | `--data_path`  | `data`        | 数据目录路径 (file模式)                                    |
-| `--model`      | `lightweight` | 模型类型：`lightweight`(3层) / `deeper`(4层) / `deep`(5层) |
+| `--model`      | `lightweight` | 模型类型（详见下方命令示例）                              |
 | `--epochs`     | `50`          | 训练轮数                                                   |
 | `--batch_size` | `32`          | 批次大小                                                   |
 | `--lr`         | `0.001`       | 学习率                                                     |
@@ -59,6 +59,8 @@ uv run python scripts/transformer.py --noisy noisy.mat --clean clean.mat --signa
 | `--num_train`  | `5000`        | 合成训练样本数                                             |
 | `--num_val`    | `1000`        | 合成验证样本数                                             |
 | `--seed`       | `42`          | 随机种子                                                   |
+
+`--model` 可选：`lightweight` / `deeper` / `deep` / `unsupervised_deep`。
 
 ---
 
@@ -96,11 +98,69 @@ python scripts/train/train.py --mode file --data_path ./data --model deep --epoc
 
 ---
 
+## 无监督自编码器训练 (scripts/train/train.py)
+
+`unsupervised_deep` 与 `DeepCAE` 结构相同（5层编码 + 5层解码），但训练目标改为输入重建：
+
+```text
+L = MSE(f(x_noisy), x_noisy)
+```
+
+即不使用 `clean` 作为优化目标，适用于无标签或弱标签场景。
+
+### 关键参数
+
+| 参数           | 默认值        | 说明                                       |
+| -------------- | ------------- | ------------------------------------------ |
+| `--model`      | `lightweight` | 设为 `unsupervised_deep`                  |
+| `--mode`       | `synthetic`   | 数据模式：`synthetic` / `file`             |
+| `--data_path`  | `data`        | 文件模式下的数据目录                       |
+| `--epochs`     | `50`          | 训练轮数                                   |
+| `--batch_size` | `32`          | 批次大小                                   |
+| `--lr`         | `0.001`       | 学习率                                     |
+| `--dropout`    | `0.1`         | Dropout 率                                 |
+| `--patience`   | `50`          | 早停耐心值                                 |
+| `--min_epochs` | `30`          | 最小训练轮数                               |
+
+### 无监督快速训练命令
+
+#### 1. 合成数据
+
+```bash
+python scripts/train/train.py --model unsupervised_deep --epochs 50
+```
+
+#### 2. 实验数据
+
+```bash
+python scripts/train/train.py --mode file --data_path ./data --model unsupervised_deep --epochs 100
+```
+
+#### 3. 实验数据 + 防过拟合
+
+```bash
+python scripts/train/train.py --mode file --data_path ./data --model unsupervised_deep --epochs 120 --dropout 0.2 --patience 20
+```
+
+### 输出文件
+
+| 文件                          | 说明                 |
+| ----------------------------- | -------------------- |
+| `best_unsupervised_model.pth` | 无监督模型最佳权重   |
+| `fig_pre_train_samples.png`          | 训练前样本可视化     |
+| `fig_results.png`                    | 重建结果对比图       |
+| `fig_training_curves.png`            | 训练曲线 (Loss/PSNR) |
+| `fig_acoustic_validation.png`        | 声学特征验证报告     |
+
+说明：无监督最佳模型默认保存到 `checkpoints/best_unsupervised_model.pth`。
+
+---
+
 ## PINN 训练 (scripts/train/train_pinn.py)
 
 Physics-Informed Neural Network (PINN) 变体，将一维声波方程约束嵌入损失函数：
 
-```
+```text
 L_total = L_data + λ · L_physics
 L_data    = MSE(denoised, clean)
 L_physics = mean(|∂²u/∂t²|²)   — 波动方程残差

@@ -22,13 +22,22 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
+import inspect
+import secrets
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict
 from tqdm import tqdm
 
-from data import UltrasonicDataset, create_dataloaders
-from model.model import DeepCAE, count_parameters
+from data import create_dataloaders
+from model.model import (
+    DeepCAE,
+    DeeperCAE,
+    LightweightCAE,
+    UnsupervisedDeepCAE,
+    count_parameters,
+)
 from scripts.analysis.acoustic_validation import run_acoustic_validation
+from scripts.train.visualization import plot_results
 
 
 RESULTS_DIR = Path("results")
@@ -156,129 +165,6 @@ def plot_pre_training_samples(
     print(f"[INFO] Saved pre-training samples to {save_path}")
 
 
-def plot_results(
-    model: nn.Module,
-    dataloader: torch.utils.data.DataLoader,
-    device: torch.device,
-    save_path: str = _image_path("fig_results.png"),
-    num_samples: int = 6,
-    train_config: dict = None,
-) -> None:
-    """
-    Plot denoising results after training.
-
-    Shows 3 rows (Noisy, Clean, Denoised) x num_samples columns.
-    Each column represents one signal sample.
-
-    Args:
-        model: Trained CAE model
-        dataloader: DataLoader for test samples
-        device: Device to run inference on
-        save_path: Path to save the figure
-        num_samples: Number of samples to visualize (default 6)
-        train_config: Dictionary of training configuration to display
-    """
-    model.eval()
-
-    # Collect multiple batches to get more samples for random selection
-    all_noisy = []
-    all_clean = []
-    for batch_noisy, batch_clean in dataloader:
-        all_noisy.append(batch_noisy)
-        all_clean.append(batch_clean)
-        if len(all_noisy) * batch_noisy.shape[0] >= 100:  # Collect ~100 samples
-            break
-
-    all_noisy = torch.cat(all_noisy, dim=0)
-    all_clean = torch.cat(all_clean, dim=0)
-
-    # Randomly select samples
-    total_samples = all_noisy.shape[0]
-    random_indices = np.random.choice(
-        total_samples, size=min(num_samples, total_samples), replace=False
-    )
-
-    noisy = all_noisy[random_indices]
-    clean = all_clean[random_indices]
-    noisy_device = noisy.to(device)
-
-    # Run inference
-    with torch.no_grad():
-        denoised = model(noisy_device)
-
-    # Move to CPU for plotting
-    noisy_np = noisy.cpu().numpy()
-    clean_np = clean.cpu().numpy()
-    denoised_np = denoised.cpu().numpy()
-
-    # Time axis (microseconds)
-    time_us = np.linspace(0, 160, noisy_np.shape[-1])
-
-    # Create figure: 3 rows (Noisy, Clean, Denoised) x num_samples columns
-    fig, axes = plt.subplots(3, num_samples, figsize=(4 * num_samples, 10))
-
-    # Build title with training config
-    title = "Denoising Results: Noisy Input → Clean Ground Truth → Denoised Output"
-    if train_config:
-        config_str = (
-            f"model={train_config.get('model', 'N/A')}, "
-            f"epochs={train_config.get('epochs', 'N/A')}, "
-            f"dropout={train_config.get('dropout', 'N/A')}, "
-            f"augment={train_config.get('augment', False)}, "
-            f"mode={train_config.get('mode', 'N/A')}"
-        )
-        if train_config.get("best_psnr"):
-            config_str += f", best_val_psnr={train_config['best_psnr']:.2f}dB"
-        title = f"{title}\n[{config_str}]"
-
-    fig.suptitle(title, fontsize=12, fontweight="bold")
-
-    row_titles = ["Noisy Input", "Clean Ground Truth", "Denoised Output"]
-    colors = ["blue", "green", "red"]
-
-    for col in range(num_samples):
-        noisy_sig = noisy_np[col, 0]
-        clean_sig = clean_np[col, 0]
-        denoised_sig = denoised_np[col, 0]
-        signals = [noisy_sig, clean_sig, denoised_sig]
-
-        # Calculate metrics
-        psnr = calculate_psnr(
-            torch.from_numpy(clean_np[col]), torch.from_numpy(denoised_np[col])
-        )
-
-        # Input SNR
-        noise = noisy_sig - clean_sig
-        input_snr = calculate_snr(torch.from_numpy(clean_sig), torch.from_numpy(noise))
-
-        for row in range(3):
-            ax = axes[row, col] if num_samples > 1 else axes[row]
-            ax.plot(time_us, signals[row], color=colors[row], linewidth=0.7)
-
-            # Add title with metrics
-            if row == 0:
-                ax.set_title(
-                    f"Sample {col + 1}\n{row_titles[row]}\n(Input SNR: {input_snr:.1f} dB)",
-                    fontsize=10,
-                )
-            elif row == 2:
-                ax.set_title(f"{row_titles[row]}\n(PSNR: {psnr:.2f} dB)", fontsize=10)
-            else:
-                ax.set_title(row_titles[row], fontsize=10)
-
-            ax.set_xlabel("Time (μs)")
-            ax.set_ylabel("Amplitude")
-            ax.set_ylim(-1.5, 1.5)
-            ax.grid(True, alpha=0.3)
-            ax.axhline(y=0, color="k", linewidth=0.5, alpha=0.3)
-
-    plt.tight_layout()
-    _ensure_parent_dir(save_path)
-    plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
-    plt.close()
-    print(f"[INFO] Saved results to {save_path}")
-
-
 def plot_training_curves(
     history: Dict[str, list], save_path: str = _image_path("fig_training_curves.png")
 ) -> None:
@@ -326,6 +212,7 @@ def train_epoch(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
+    unsupervised: bool = False,
 ) -> Tuple[float, float]:
     """
     Train for one epoch.
@@ -336,6 +223,7 @@ def train_epoch(
         criterion: Loss function (MSE)
         optimizer: Optimizer (Adam)
         device: Device to train on
+        unsupervised: If True, use noisy input as reconstruction target
 
     Returns:
         Tuple of (average_loss, average_psnr)
@@ -349,9 +237,11 @@ def train_epoch(
         noisy = noisy.to(device)
         clean = clean.to(device)
 
+        target = noisy if unsupervised else clean
+
         # Forward pass
         denoised = model(noisy)
-        loss = criterion(denoised, clean)
+        loss = criterion(denoised, target)
 
         # Backward pass
         optimizer.zero_grad()
@@ -371,6 +261,7 @@ def validate(
     dataloader: torch.utils.data.DataLoader,
     criterion: nn.Module,
     device: torch.device,
+    unsupervised: bool = False,
 ) -> Tuple[float, float]:
     """
     Validate the model on validation set.
@@ -380,6 +271,7 @@ def validate(
         dataloader: Validation dataloader
         criterion: Loss function
         device: Device to run on
+        unsupervised: If True, use noisy input as reconstruction target
 
     Returns:
         Tuple of (average_loss, average_psnr)
@@ -394,8 +286,10 @@ def validate(
             noisy = noisy.to(device)
             clean = clean.to(device)
 
+            target = noisy if unsupervised else clean
+
             denoised = model(noisy)
-            loss = criterion(denoised, clean)
+            loss = criterion(denoised, target)
 
             total_loss += loss.item()
             total_psnr += calculate_psnr(clean, denoised)
@@ -413,10 +307,10 @@ def train(
     save_best: bool = True,
     checkpoint_dir: str = str(CHECKPOINTS_DIR),
     use_deeper_model: bool = False,
-    model_type: str = "lightweight",  # 'lightweight', 'deeper', 'deep'
-    seed: int = 42,
-    data_mode: str = "synthetic",
-    data_path: str = None,
+    model_type: str = "lightweight",  # 'lightweight', 'deeper', 'deep', 'unsupervised_deep'
+    seed: Optional[int] = None,
+    data_mode: str = "file",
+    data_path: Optional[str] = "data",
     early_stopping_patience: int = 50,  # More patient: wait 50 epochs without improvement
     min_epochs: int = 30,  # Minimum epochs before early stopping can trigger
     dropout_rate: float = 0.1,  # Lower dropout (0.1) - 0.4 was too aggressive
@@ -442,8 +336,8 @@ def train(
         save_best: Whether to save best model based on val PSNR
         checkpoint_dir: Directory to save model checkpoints
         use_deeper_model: Deprecated, use model_type instead
-        model_type: Model architecture - 'lightweight' (3层), 'deeper' (4层), 'deep' (5层)
-        seed: Random seed for reproducibility
+        model_type: Model architecture - 'lightweight' (3层), 'deeper' (4层), 'deep' (5层), 'unsupervised_deep' (无监督5层)
+        seed: Random seed for reproducibility. If None or negative, generate a random seed.
         data_mode: 'synthetic' or 'file'
         data_path: Path to data directory (for file mode, output of transformer.py)
         early_stopping_patience: Stop training if validation PSNR doesn't improve for N epochs
@@ -452,9 +346,18 @@ def train(
     Returns:
         Tuple of (trained_model, training_history)
     """
-    # Set seeds for reproducibility
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    # Set seeds for reproducibility (or randomize when seed is None/negative)
+    if seed is None or seed < 0:
+        resolved_seed = int(secrets.randbits(32))
+        print(f"[INFO] Random seed generated: {resolved_seed}")
+    else:
+        resolved_seed = int(seed)
+        if resolved_seed > 2**32 - 1:
+            raise ValueError("seed must be <= 2**32 - 1")
+        print(f"[INFO] Using fixed seed: {resolved_seed}")
+
+    torch.manual_seed(resolved_seed)
+    np.random.seed(resolved_seed)
 
     # ============================================================
     # Device Selection
@@ -473,31 +376,34 @@ def train(
     # Create Dataloaders
     # ============================================================
     if data_mode == "file":
+        if data_path is None:
+            data_path = "data"
+            print("[WARNING] data_path is None in file mode, fallback to 'data'.")
         print(f"\n[INFO] Loading experimental data from {data_path}...")
         train_loader, val_loader = create_dataloaders(
             batch_size=batch_size,
-            seed=seed,
+            seed=resolved_seed,
             mode="file",
             data_path=data_path,
             augment=augment,
         )
-        print(f"[INFO] Data mode: FILE (experimental data)")
+        print("[INFO] Data mode: FILE (experimental data)")
         if augment:
-            print(f"[INFO] Data augmentation: ENABLED")
+            print("[INFO] Data augmentation: ENABLED")
     else:
         print("\n[INFO] Creating synthetic datasets...")
         train_loader, val_loader = create_dataloaders(
             num_train=num_train,
             num_val=num_val,
             batch_size=batch_size,
-            seed=seed,
+            seed=resolved_seed,
             mode="synthetic",
             augment=augment,
         )
-        print(f"[INFO] Data mode: SYNTHETIC")
+        print("[INFO] Data mode: SYNTHETIC")
         print(f"[INFO] Training samples: {num_train}, Validation samples: {num_val}")
         if augment:
-            print(f"[INFO] Data augmentation: ENABLED")
+            print("[INFO] Data augmentation: ENABLED")
 
     print(f"[INFO] Batch size: {batch_size}")
     print(f"[INFO] Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
@@ -509,15 +415,20 @@ def train(
     if use_deeper_model and model_type == "lightweight":
         model_type = "deeper"
 
+    is_unsupervised = model_type == "unsupervised_deep"
+
     if model_type == "deep":
         model = DeepCAE(dropout_rate=dropout_rate).to(device)
-        print(f"\n[INFO] Using DeepCAE model (5层, 宽通道)")
+        print("\n[INFO] Using DeepCAE model (5层, 宽通道)")
+    elif model_type == "unsupervised_deep":
+        model = UnsupervisedDeepCAE(dropout_rate=dropout_rate).to(device)
+        print("\n[INFO] Using UnsupervisedDeepCAE model (5层, 输入重建)")
     elif model_type == "deeper":
         model = DeeperCAE(dropout_rate=dropout_rate).to(device)
-        print(f"\n[INFO] Using DeeperCAE model (4层)")
+        print("\n[INFO] Using DeeperCAE model (4层)")
     else:
         model = LightweightCAE(dropout_rate=dropout_rate).to(device)
-        print(f"\n[INFO] Using LightweightCAE model (3层)")
+        print("\n[INFO] Using LightweightCAE model (3层)")
 
     print(f"[INFO] Total parameters: {count_parameters(model):,}")
     print(f"[INFO] Dropout rate: {dropout_rate}")
@@ -540,11 +451,14 @@ def train(
     )
 
     print(f"[INFO] Optimizer: Adam (lr={learning_rate}, weight_decay=1e-4)")
-    print(f"[INFO] Scheduler: CosineAnnealingWarmRestarts (T_0=25)")
+    print("[INFO] Scheduler: CosineAnnealingWarmRestarts (T_0=25)")
     print(
         f"[INFO] Early Stopping: patience={early_stopping_patience}, min_epochs={min_epochs}"
     )
-    print(f"[INFO] Loss: MSELoss")
+    if is_unsupervised:
+        print("[INFO] Loss: MSELoss (target = noisy input, unsupervised)")
+    else:
+        print("[INFO] Loss: MSELoss (target = clean signal)")
 
     # ============================================================
     # Create Checkpoint Directory
@@ -575,6 +489,9 @@ def train(
     }
 
     best_val_psnr = -float("inf")
+    best_checkpoint_name = (
+        "best_unsupervised_model.pth" if is_unsupervised else "best_model.pth"
+    )
     early_stopping_counter = 0  # Counter for early stopping
 
     # Progress bar
@@ -583,11 +500,22 @@ def train(
     for epoch in pbar:
         # Train one epoch
         train_loss, train_psnr = train_epoch(
-            model, train_loader, criterion, optimizer, device
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            unsupervised=is_unsupervised,
         )
 
         # Validate
-        val_loss, val_psnr = validate(model, val_loader, criterion, device)
+        val_loss, val_psnr = validate(
+            model,
+            val_loader,
+            criterion,
+            device,
+            unsupervised=is_unsupervised,
+        )
 
         # Update learning rate scheduler (CosineAnnealingWarmRestarts uses epoch)
         scheduler.step(epoch)
@@ -627,8 +555,9 @@ def train(
                     "val_loss": val_loss,
                     "train_psnr": train_psnr,
                     "train_loss": train_loss,
+                    "unsupervised": is_unsupervised,
                 },
-                checkpoint_path / "best_model.pth",
+                checkpoint_path / best_checkpoint_name,
             )
             tqdm.write(f"  → Saved new best model (Val PSNR: {val_psnr:.2f} dB)")
         else:
@@ -646,9 +575,9 @@ def train(
     # ============================================================
     # Load Best Model
     # ============================================================
-    if save_best and (checkpoint_path / "best_model.pth").exists():
+    if save_best and (checkpoint_path / best_checkpoint_name).exists():
         checkpoint = torch.load(
-            checkpoint_path / "best_model.pth",
+            checkpoint_path / best_checkpoint_name,
             map_location=device,
             weights_only=False,  # Trust our own checkpoint
         )
@@ -675,17 +604,30 @@ def train(
         "best_psnr": best_val_psnr,
     }
 
+    results_image_name = "fig_unsupervised_results.png" if is_unsupervised else "fig_results.png"
+    curves_image_name = (
+        "fig_unsupervised_training_curves.png"
+        if is_unsupervised
+        else "fig_training_curves.png"
+    )
+    acoustic_image_name = (
+        "fig_unsupervised_acoustic_validation.png"
+        if is_unsupervised
+        else "fig_acoustic_validation.png"
+    )
+
     # Results visualization
     plot_results(
         model,
         val_loader,
         device,
-        _image_path("fig_results.png"),
+        _image_path(results_image_name),
         train_config=train_config,
+        unsupervised=is_unsupervised,
     )
 
     # Training curves
-    plot_training_curves(history, _image_path("fig_training_curves.png"))
+    plot_training_curves(history, _image_path(curves_image_name))
 
     # Acoustic feature validation (声学特征验证)
     print("\n" + "=" * 60)
@@ -695,7 +637,7 @@ def train(
         model,
         val_loader,
         device,
-        save_path=_image_path("fig_acoustic_validation.png"),
+        save_path=_image_path(acoustic_image_name),
     )
 
     # ============================================================
@@ -706,14 +648,22 @@ def train(
     print("=" * 60)
     print(f"  → Best validation PSNR: {best_val_psnr:.2f} dB")
     print(f"  → Final training PSNR: {history['train_psnr'][-1]:.2f} dB")
-    print(f"  → Figures saved:")
+    print("  → Figures saved:")
     print(f"      - {_image_path('fig_pre_train_samples.png')}")
-    print(f"      - {_image_path('fig_results.png')}")
-    print(f"      - {_image_path('fig_training_curves.png')}")
-    print(f"      - {_image_path('fig_acoustic_validation.png')}")
-    print(f"  → Model checkpoint: {checkpoint_path / 'best_model.pth'}")
+    print(f"      - {_image_path(results_image_name)}")
+    print(f"      - {_image_path(curves_image_name)}")
+    print(f"      - {_image_path(acoustic_image_name)}")
+    print(f"  → Model checkpoint: {checkpoint_path / best_checkpoint_name}")
 
     return model, history
+
+
+def _get_train_default(param_name: str):
+    """Read default values directly from train() signature (single source of truth)."""
+    param = inspect.signature(train).parameters.get(param_name)
+    if param is None or param.default is inspect._empty:
+        raise ValueError(f"Parameter '{param_name}' has no default in train()")
+    return param.default
 
 
 if __name__ == "__main__":
@@ -728,6 +678,9 @@ if __name__ == "__main__":
     #
     # With deep model and anti-overfitting:
     #   uv run python train.py --mode file --data_path data --model deep --epochs 200 --lr 0.0005 --patience 25
+    #
+    # With unsupervised autoencoder (input reconstruction):
+    #   uv run python train.py --mode file --data_path data --model unsupervised_deep --epochs 100
     # ============================================================
 
     import argparse
@@ -741,39 +694,52 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        default="synthetic",
+        default=_get_train_default("data_mode"),
         choices=["synthetic", "file"],
         help="Data mode: synthetic or file",
     )
     parser.add_argument(
         "--data_path",
         type=str,
-        default="data",
+        default=_get_train_default("data_path"),
         help="Path to data directory (for file mode)",
     )
 
     # Training parameters
     parser.add_argument(
-        "--epochs", type=int, default=50, help="Number of training epochs"
+        "--epochs",
+        type=int,
+        default=_get_train_default("num_epochs"),
+        help="Number of training epochs",
     )
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=_get_train_default("batch_size"),
+        help="Batch size",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=_get_train_default("learning_rate"),
+        help="Learning rate",
+    )
     parser.add_argument(
         "--patience",
         type=int,
-        default=50,
+        default=_get_train_default("early_stopping_patience"),
         help="Early stopping patience (epochs without improvement)",
     )
     parser.add_argument(
         "--min_epochs",
         type=int,
-        default=30,
+        default=_get_train_default("min_epochs"),
         help="Minimum epochs before early stopping can trigger",
     )
     parser.add_argument(
         "--dropout",
         type=float,
-        default=0.1,
+        default=_get_train_default("dropout_rate"),
         help="Dropout rate for regularization (0.1 recommended, 0.4 was too aggressive)",
     )
 
@@ -788,13 +754,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_train",
         type=int,
-        default=5000,
+        default=_get_train_default("num_train"),
         help="Number of synthetic training samples",
     )
     parser.add_argument(
         "--num_val",
         type=int,
-        default=1000,
+        default=_get_train_default("num_val"),
         help="Number of synthetic validation samples",
     )
 
@@ -802,14 +768,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="lightweight",
-        choices=["lightweight", "deeper", "deep"],
-        help="Model type: lightweight (3层), deeper (4层), deep (5层)",
+        default=_get_train_default("model_type"),
+        choices=["lightweight", "deeper", "deep", "unsupervised_deep"],
+        help="Model type: lightweight (3层), deeper (4层), deep (5层), unsupervised_deep (无监督5层)",
     )
     parser.add_argument(
         "--deeper", action="store_true", help="(Deprecated) Use --model deeper instead"
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=_get_train_default("seed"),
+        help="Random seed (default: random each run; set integer for reproducibility)",
+    )
 
     args = parser.parse_args()
 
