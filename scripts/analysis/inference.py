@@ -61,6 +61,21 @@ def _ensure_parent_dir(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _print_signal_stats(tag: str, signals: np.ndarray) -> None:
+    """Print concise signal statistics for debugging numerical issues."""
+    if signals.size == 0:
+        print(f"[WARNING] {tag}: empty signal array")
+        return
+
+    nonzero_ratio = float(np.count_nonzero(signals)) / float(signals.size)
+    print(
+        f"[INFO] {tag}: shape={signals.shape}, dtype={signals.dtype}, "
+        f"min={signals.min():.6e}, max={signals.max():.6e}, "
+        f"mean={signals.mean():.6e}, std={signals.std():.6e}, "
+        f"nonzero_ratio={nonzero_ratio:.6f}"
+    )
+
+
 def load_model(
     checkpoint_path: str, model_type: str = "deep", device: torch.device = None
 ) -> torch.nn.Module:
@@ -298,7 +313,9 @@ def denoise_signals(
     """
     model.eval()
     n_signals = signals.shape[0]
-    denoised = np.zeros_like(signals)
+    # Keep denoising output in float64 to avoid underflow when later
+    # restoring ultra-small physical amplitudes.
+    denoised = np.zeros(signals.shape, dtype=np.float64)
 
     print(f"\n[INFO] Denoising {n_signals} signals...")
 
@@ -314,7 +331,7 @@ def denoise_signals(
             output = model(batch_tensor)
 
             # Remove channel dimension and move to CPU
-            denoised[i:end_idx] = output.squeeze(1).cpu().numpy()
+            denoised[i:end_idx] = output.squeeze(1).cpu().numpy().astype(np.float64)
 
             # Progress
             if (i + batch_size) % (batch_size * 10) == 0 or end_idx == n_signals:
@@ -342,7 +359,9 @@ def denormalize_signals(denoised_normalized: np.ndarray, metadata: dict) -> np.n
     signal_mins = metadata["signal_mins"]
     signal_maxs = metadata["signal_maxs"]
 
-    denoised = np.zeros_like(denoised_normalized)
+    # Preserve float64 precision during inverse scaling to prevent tiny signals
+    # from being rounded to zero in float32.
+    denoised = np.zeros(denoised_normalized.shape, dtype=np.float64)
 
     for i in range(denoised_normalized.shape[0]):
         # Reverse normalization: normalized = 2 * (x - min) / (max - min) - 1
@@ -357,19 +376,27 @@ def denormalize_signals(denoised_normalized: np.ndarray, metadata: dict) -> np.n
 
         if amplitude_range > min_threshold:
             # Normal denormalization
-            denoised[i] = (denoised_normalized[i] + 1) / 2 * amplitude_range + min_val
+            denoised[i] = (
+                (denoised_normalized[i].astype(np.float64) + 1.0) / 2.0
+                * amplitude_range
+                + min_val
+            )
         else:
             # Signal was nearly flat during normalization
             # For very small signals, preserve the denoised structure
             if amplitude_range > 0:
                 # Even tiny signals should be denormalized properly
                 denoised[i] = (
-                    denoised_normalized[i] + 1
-                ) / 2 * amplitude_range + min_val
+                    (denoised_normalized[i].astype(np.float64) + 1.0) / 2.0
+                    * amplitude_range
+                    + min_val
+                )
             else:
                 # Truly flat signal (constant value)
                 # Restore to the constant value (min_val == max_val)
-                denoised[i] = np.full_like(denoised_normalized[i], min_val)
+                denoised[i] = np.full_like(
+                    denoised_normalized[i], min_val, dtype=np.float64
+                )
 
     return denoised
 
@@ -516,13 +543,23 @@ def run_inference(
         interpolation_method=interpolation_method,
         target_signal_length=target_signal_length,
     )
+    _print_signal_stats("Input (normalized)", normalized_signals)
+    _print_signal_stats("Input (original scale)", original_signals)
 
     # Run denoising
     denoised_normalized = denoise_signals(model, normalized_signals, device, batch_size)
+    _print_signal_stats("Model output (normalized)", denoised_normalized)
 
     # Denormalize
     print("\n[INFO] Denormalizing signals...")
     denoised = denormalize_signals(denoised_normalized, metadata)
+    _print_signal_stats("Model output (original scale)", denoised)
+
+    if np.count_nonzero(denoised) == 0 and np.count_nonzero(denoised_normalized) > 0:
+        print(
+            "[WARNING] Denormalized output is all zeros while normalized output is not. "
+            "This usually indicates numerical underflow from tiny amplitudes."
+        )
 
     # Save results
     output_dir = Path(output_path)

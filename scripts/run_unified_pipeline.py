@@ -256,7 +256,10 @@ def main() -> None:
     parser.add_argument("--patch_size", type=int, default=5)
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument(
-        "--model_type", choices=["spatial_cae", "deepsets"], default="spatial_cae"
+        "--model_type",
+        choices=["spatial_cae", "spatial_context_cae", "deepsets", "set_invariant_pinn"],
+        default="spatial_cae",
+        help="DeepSets pipeline model variant",
     )
     parser.add_argument("--base_channels", type=int, default=16)
     parser.add_argument("--coord_dim", type=int, default=64)

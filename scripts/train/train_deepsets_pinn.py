@@ -29,7 +29,11 @@ from pathlib import Path
 from typing import Tuple, Dict, Any, cast
 from tqdm import tqdm
 
-from model.model_deepsets import DeepSetsPINN, SpatialAuxiliaryCAE, count_parameters
+from model.model import (
+    SetInvariantWavePINN,
+    SpatialContextCAE,
+    count_parameters,
+)
 from data import create_deepsets_dataloaders, GRID_SPACING
 from scripts.analysis import acoustic_validation as av
 
@@ -731,8 +735,20 @@ def train_deepsets_pinn(
     # ============================================================
     # Initialize Model
     # ============================================================
-    if model_type == "spatial_cae":
-        model = SpatialAuxiliaryCAE(
+    resolved_model_type = model_type.strip().lower()
+    if resolved_model_type not in {
+        "spatial_cae",
+        "spatial_context_cae",
+        "deepsets",
+        "set_invariant_pinn",
+    }:
+        raise ValueError(
+            "Unsupported model_type. Use one of: "
+            "spatial_cae, spatial_context_cae, deepsets, set_invariant_pinn"
+        )
+
+    if resolved_model_type in {"spatial_cae", "spatial_context_cae"}:
+        model = SpatialContextCAE(
             base_channels=base_channels,
             coord_dim=coord_dim,
             dropout_rate=dropout_rate,
@@ -743,7 +759,7 @@ def train_deepsets_pinn(
             patch_size=patch_size,
         ).to(device)
     else:
-        model = DeepSetsPINN(
+        model = SetInvariantWavePINN(
             signal_embed_dim=signal_embed_dim,
             coord_embed_dim=coord_embed_dim,
             point_dim=point_dim,
@@ -892,7 +908,7 @@ def train_deepsets_pinn(
                     "patch_size": patch_size,
                     "dx": dx,
                     "dy": dy,
-                    "model_type": model_type,
+                    "model_type": resolved_model_type,
                     "base_channels": base_channels,
                     "coord_dim": coord_dim,
                 },
@@ -1007,9 +1023,9 @@ if __name__ == "__main__":
         "--model_type",
         type=str,
         default="spatial_cae",
-        choices=["spatial_cae", "deepsets"],
-        help="Model type: spatial_cae (DeepCAE backbone with spatial aux) "
-        "or deepsets (legacy DeepSetsPINN)",
+        choices=["spatial_cae", "spatial_context_cae", "deepsets", "set_invariant_pinn"],
+        help="Model type: spatial_cae/spatial_context_cae (SpatialContextCAE) "
+        "or deepsets/set_invariant_pinn (SetInvariantWavePINN)",
     )
     parser.add_argument(
         "--base_channels",

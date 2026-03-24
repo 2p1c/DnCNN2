@@ -85,6 +85,27 @@ uv run python scripts/train/train_deepsets_pinn.py --data_path data
 uv run python scripts/train/train_deepsets_pinn.py --epochs 100 --patch_size 7 --physics_weight 1e-4
 ```
 
+模型命名新旧对照（兼容）：
+
+| 维度 | 旧名称 | 新名称（推荐） | 兼容状态 |
+|---|---|---|---|
+| Python 类名 | `DeepSetsPINN` | `SetInvariantWavePINN` | 两者都可导入/使用 |
+| Python 类名 | `SpatialAuxiliaryCAE` | `SpatialContextCAE` | 两者都可导入/使用 |
+| CLI `--model_type` | `deepsets` | `set_invariant_pinn` | 两者都可用 |
+| CLI `--model_type` | `spatial_cae` | `spatial_context_cae` | 两者都可用 |
+
+推荐写法示例：
+
+```bash
+# 推荐：新命名（语义更清晰）
+uv run python scripts/train/train_deepsets_pinn.py --model_type spatial_context_cae --data_path data
+uv run python scripts/train/train_deepsets_pinn.py --model_type set_invariant_pinn --data_path data
+
+# 兼容：旧命名（仍可用）
+uv run python scripts/train/train_deepsets_pinn.py --model_type spatial_cae --data_path data
+uv run python scripts/train/train_deepsets_pinn.py --model_type deepsets --data_path data
+```
+
 Default checkpoint:
 - `results/checkpoints/best_deepsets_pinn.pth`
 

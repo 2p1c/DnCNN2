@@ -12,7 +12,17 @@ Architecture:
 import math
 import torch
 import torch.nn as nn
-from typing import Tuple
+from typing import Tuple, Optional
+
+
+# Shared physical constants across all model variants.
+SAMPLING_RATE: float = 6.25e6  # Hz
+DURATION: float = 160e-6  # seconds
+NUM_POINTS: int = 1000  # time samples
+CENTER_FREQUENCY: float = 250e3  # Hz
+DEFAULT_WAVE_SPEED: float = 5900.0  # m/s (steel)
+DEFAULT_DX: float = 1e-3  # 1 mm grid spacing
+DEFAULT_DY: float = 1e-3  # 1 mm grid spacing
 
 
 class DeepCAE(nn.Module):
@@ -426,6 +436,697 @@ class DeepCAE_PINN(DeepCAE):
         residual = self.compute_physics_residual(denoised)
 
         return denoised, residual
+
+
+class SignalEncoder(nn.Module):
+    """Conv1d encoder for per-point set signals used by DeepSets variants."""
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        base_channels: int = 32,
+        kernel_size: int = 7,
+        dropout_rate: float = 0.1,
+        embed_dim: int = 256,
+    ):
+        super().__init__()
+        padding = kernel_size // 2
+
+        self.enc1 = nn.Sequential(
+            nn.Conv1d(
+                in_channels, base_channels, kernel_size, stride=2, padding=padding
+            ),
+            nn.BatchNorm1d(base_channels),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.enc2 = nn.Sequential(
+            nn.Conv1d(
+                base_channels, base_channels * 2, kernel_size, stride=2, padding=padding
+            ),
+            nn.BatchNorm1d(base_channels * 2),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.enc3 = nn.Sequential(
+            nn.Conv1d(
+                base_channels * 2,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
+            nn.BatchNorm1d(base_channels * 4),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.enc4 = nn.Sequential(
+            nn.Conv1d(
+                base_channels * 4,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
+            nn.BatchNorm1d(base_channels * 8),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.enc5 = nn.Sequential(
+            nn.Conv1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
+            nn.BatchNorm1d(base_channels * 8),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.proj = nn.Linear(base_channels * 8, embed_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.enc1(x)
+        h = self.enc2(h)
+        h = self.enc3(h)
+        h = self.enc4(h)
+        h = self.enc5(h)
+        h = self.pool(h).squeeze(-1)
+        h = self.proj(h)
+        return h
+
+
+class CoordinateMLP(nn.Module):
+    """Encode normalized 2D coordinates to a compact embedding."""
+
+    def __init__(self, coord_dim: int = 2, embed_dim: int = 64):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(coord_dim, 64),
+            nn.ReLU(inplace=True),
+            nn.Linear(64, embed_dim),
+        )
+
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        return self.mlp(coords)
+
+
+class PointEncoder(nn.Module):
+    """Fuse per-point signal and coordinate embeddings."""
+
+    def __init__(
+        self, signal_dim: int = 256, coord_dim: int = 64, output_dim: int = 256
+    ):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(signal_dim + coord_dim, output_dim),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Linear(output_dim, output_dim),
+        )
+
+    def forward(
+        self, signal_emb: torch.Tensor, coord_emb: torch.Tensor
+    ) -> torch.Tensor:
+        return self.mlp(torch.cat([signal_emb, coord_emb], dim=-1))
+
+
+class SignalDecoder(nn.Module):
+    """ConvTranspose1d decoder used by set-based denoising models."""
+
+    def __init__(
+        self,
+        input_dim: int = 512,
+        base_channels: int = 32,
+        kernel_size: int = 7,
+        dropout_rate: float = 0.1,
+        latent_channels: int = 256,
+        latent_length: int = 32,
+    ):
+        super().__init__()
+        padding = kernel_size // 2
+        self.latent_channels = latent_channels
+        self.latent_length = latent_length
+
+        self.pre = nn.Linear(input_dim, latent_channels * latent_length)
+
+        self.dec5 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
+            nn.BatchNorm1d(base_channels * 8),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.dec4 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
+            nn.BatchNorm1d(base_channels * 4),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.dec3 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 4,
+                base_channels * 2,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
+            nn.BatchNorm1d(base_channels * 2),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.dec2 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 2,
+                base_channels,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
+            nn.BatchNorm1d(base_channels),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.dec1 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels,
+                1,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
+            nn.Tanh(),
+        )
+
+    def forward(self, feat: torch.Tensor) -> torch.Tensor:
+        h = self.pre(feat)
+        h = h.view(*feat.shape[:-1], self.latent_channels, self.latent_length)
+        h = self.dec5(h)
+        h = self.dec4(h)
+        h = self.dec3(h)
+        h = self.dec2(h)
+        h = self.dec1(h)
+        return h
+
+
+class DeepSetsPINN(nn.Module):
+    """Set-invariant encoder-decoder with 2D wave-equation residual."""
+
+    def __init__(
+        self,
+        signal_embed_dim: int = 256,
+        coord_embed_dim: int = 64,
+        point_dim: int = 256,
+        base_channels: int = 32,
+        kernel_size: int = 7,
+        dropout_rate: float = 0.1,
+        wave_speed: float = DEFAULT_WAVE_SPEED,
+        center_frequency: float = CENTER_FREQUENCY,
+        dx: float = DEFAULT_DX,
+        dy: float = DEFAULT_DY,
+        patch_size: int = 5,
+    ):
+        super().__init__()
+
+        self.signal_encoder = SignalEncoder(
+            base_channels=base_channels,
+            kernel_size=kernel_size,
+            dropout_rate=dropout_rate,
+            embed_dim=signal_embed_dim,
+        )
+        self.coord_mlp = CoordinateMLP(
+            coord_dim=2,
+            embed_dim=coord_embed_dim,
+        )
+        self.point_encoder = PointEncoder(
+            signal_dim=signal_embed_dim,
+            coord_dim=coord_embed_dim,
+            output_dim=point_dim,
+        )
+        self.decoder = SignalDecoder(
+            input_dim=point_dim * 2,
+            base_channels=base_channels,
+            kernel_size=kernel_size,
+            dropout_rate=dropout_rate,
+            latent_channels=base_channels * 8,
+            latent_length=32,
+        )
+
+        self.wave_speed = wave_speed
+        self.center_frequency = center_frequency
+        self.omega0 = 2.0 * math.pi * center_frequency
+        self.dt = DURATION / (NUM_POINTS - 1)
+        self.dx = dx
+        self.dy = dy
+        self.patch_size = patch_size
+
+        self._precompute_patch_topology(patch_size)
+        self._initialize_weights()
+
+    def _precompute_patch_topology(self, P: int) -> None:
+        half = P // 2
+        interior, left, right, down, up = [], [], [], [], []
+        for dc in range(-half, half + 1):
+            for dr in range(-half, half + 1):
+                if (
+                    abs(dc - 1) <= half
+                    and abs(dc + 1) <= half
+                    and abs(dr - 1) <= half
+                    and abs(dr + 1) <= half
+                ):
+                    idx = (dc + half) * P + (dr + half)
+                    interior.append(idx)
+                    left.append((dc - 1 + half) * P + (dr + half))
+                    right.append((dc + 1 + half) * P + (dr + half))
+                    down.append((dc + half) * P + (dr - 1 + half))
+                    up.append((dc + half) * P + (dr + 1 + half))
+
+        self.register_buffer("_interior_idx", torch.tensor(interior, dtype=torch.long))
+        self.register_buffer("_left_idx", torch.tensor(left, dtype=torch.long))
+        self.register_buffer("_right_idx", torch.tensor(right, dtype=torch.long))
+        self.register_buffer("_down_idx", torch.tensor(down, dtype=torch.long))
+        self.register_buffer("_up_idx", torch.tensor(up, dtype=torch.long))
+
+    def _initialize_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_out", nonlinearity="leaky_relu"
+                )
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_in", nonlinearity="leaky_relu"
+                )
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(
+        self,
+        noisy_signals: torch.Tensor,
+        coordinates: torch.Tensor,
+    ) -> torch.Tensor:
+        B, R, T = noisy_signals.shape
+
+        sig_flat = noisy_signals.reshape(B * R, 1, T)
+        sig_emb = self.signal_encoder(sig_flat)
+        sig_emb = sig_emb.view(B, R, -1)
+
+        coord_emb = self.coord_mlp(coordinates)
+        point_feat = self.point_encoder(sig_emb, coord_emb)
+
+        global_feat = point_feat.mean(dim=1, keepdim=True)
+        global_feat = global_feat.expand(-1, R, -1)
+
+        dec_input = torch.cat([point_feat, global_feat], dim=-1)
+        dec_flat = dec_input.reshape(B * R, -1)
+        out_flat = self.decoder(dec_flat)
+        denoised = out_flat.view(B, R, T)
+
+        return denoised
+
+    def compute_wave_equation_residual(
+        self,
+        denoised: torch.Tensor,
+        grid_indices: Optional[torch.Tensor] = None,
+        grid_cols: int = 41,
+        grid_rows: int = 41,
+    ) -> torch.Tensor:
+        del grid_indices, grid_cols, grid_rows
+
+        B, _, T = denoised.shape
+        c2 = self.wave_speed**2
+
+        u_c = denoised[:, self._interior_idx, :]
+        u_l = denoised[:, self._left_idx, :]
+        u_r = denoised[:, self._right_idx, :]
+        u_d = denoised[:, self._down_idx, :]
+        u_u = denoised[:, self._up_idx, :]
+
+        u_tt = (u_c[:, :, 2:] - 2.0 * u_c[:, :, 1:-1] + u_c[:, :, :-2]) / (self.dt**2)
+        u_xx = (u_r[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_l[:, :, 1:-1]) / (
+            self.dx**2
+        )
+        u_yy = (u_u[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_d[:, :, 1:-1]) / (
+            self.dy**2
+        )
+        residual = (u_tt - c2 * (u_xx + u_yy)) / (self.omega0**2)
+
+        with torch.no_grad():
+            n_int = u_c.shape[1]
+            u_flat = u_c.reshape(B * n_int, 1, T)
+            energy = torch.nn.functional.avg_pool1d(
+                u_flat.abs(), kernel_size=9, stride=1, padding=4
+            )
+            mask = energy / energy.amax(dim=-1, keepdim=True).clamp_min(1e-6)
+            mask = mask.view(B, n_int, T)[:, :, 1:-1]
+
+        return residual * mask
+
+    def physics_forward(
+        self,
+        noisy_signals: torch.Tensor,
+        coordinates: torch.Tensor,
+        grid_indices: Optional[torch.Tensor] = None,
+        grid_cols: int = 41,
+        grid_rows: int = 41,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        denoised = self.forward(noisy_signals, coordinates)
+        residual = self.compute_wave_equation_residual(
+            denoised, grid_indices=grid_indices, grid_cols=grid_cols, grid_rows=grid_rows
+        )
+        return denoised, residual
+
+
+class SpatialAuxiliaryCAE(nn.Module):
+    """DeepCAE-style model with spatial modulation at the bottleneck."""
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        base_channels: int = 32,
+        kernel_size: int = 7,
+        dropout_rate: float = 0.1,
+        coord_dim: int = 64,
+        wave_speed: float = DEFAULT_WAVE_SPEED,
+        center_frequency: float = CENTER_FREQUENCY,
+        dx: float = DEFAULT_DX,
+        dy: float = DEFAULT_DY,
+        patch_size: int = 5,
+        signal_embed_dim: int = 256,
+        coord_embed_dim: int = 64,
+        point_dim: int = 256,
+        global_dim: int = 128,
+    ):
+        del signal_embed_dim, coord_embed_dim, point_dim, global_dim
+
+        super().__init__()
+        padding = kernel_size // 2
+        self.coord_dim = coord_dim
+
+        self.enc1 = nn.Sequential(
+            nn.Conv1d(
+                in_channels, base_channels, kernel_size, stride=2, padding=padding
+            ),
+            nn.BatchNorm1d(base_channels),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.enc2 = nn.Sequential(
+            nn.Conv1d(
+                base_channels, base_channels * 2, kernel_size, stride=2, padding=padding
+            ),
+            nn.BatchNorm1d(base_channels * 2),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.enc3 = nn.Sequential(
+            nn.Conv1d(
+                base_channels * 2,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
+            nn.BatchNorm1d(base_channels * 4),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.enc4 = nn.Sequential(
+            nn.Conv1d(
+                base_channels * 4,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
+            nn.BatchNorm1d(base_channels * 8),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.enc5 = nn.Sequential(
+            nn.Conv1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+            ),
+            nn.BatchNorm1d(base_channels * 8),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.latent_channels = base_channels * 8
+        self.latent_length = 32
+
+        self.coord_mlp = CoordinateMLP(coord_dim=2, embed_dim=coord_dim)
+        self.spatial_modulator = nn.Sequential(
+            nn.Linear(self.latent_channels + coord_dim, self.latent_channels),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Linear(self.latent_channels, self.latent_channels),
+        )
+
+        self.dec5 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 8,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
+            nn.BatchNorm1d(base_channels * 8),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.dec4 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 8,
+                base_channels * 4,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=0,
+            ),
+            nn.BatchNorm1d(base_channels * 4),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.dec3 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 4,
+                base_channels * 2,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
+            nn.BatchNorm1d(base_channels * 2),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Dropout(dropout_rate),
+        )
+
+        self.dec2 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels * 2,
+                base_channels,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
+            nn.BatchNorm1d(base_channels),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+
+        self.dec1 = nn.Sequential(
+            nn.ConvTranspose1d(
+                base_channels,
+                1,
+                kernel_size,
+                stride=2,
+                padding=padding,
+                output_padding=1,
+            ),
+            nn.Tanh(),
+        )
+
+        self.wave_speed = wave_speed
+        self.center_frequency = center_frequency
+        self.omega0 = 2.0 * math.pi * center_frequency
+        self.dt = DURATION / (NUM_POINTS - 1)
+        self.dx = dx
+        self.dy = dy
+        self.patch_size = patch_size
+
+        self._precompute_patch_topology(patch_size)
+        self._initialize_weights()
+
+    def _precompute_patch_topology(self, P: int) -> None:
+        half = P // 2
+        interior, left, right, down, up = [], [], [], [], []
+        for dc in range(-half, half + 1):
+            for dr in range(-half, half + 1):
+                if (
+                    abs(dc - 1) <= half
+                    and abs(dc + 1) <= half
+                    and abs(dr - 1) <= half
+                    and abs(dr + 1) <= half
+                ):
+                    idx = (dc + half) * P + (dr + half)
+                    interior.append(idx)
+                    left.append((dc - 1 + half) * P + (dr + half))
+                    right.append((dc + 1 + half) * P + (dr + half))
+                    down.append((dc + half) * P + (dr - 1 + half))
+                    up.append((dc + half) * P + (dr + 1 + half))
+
+        self.register_buffer("_interior_idx", torch.tensor(interior, dtype=torch.long))
+        self.register_buffer("_left_idx", torch.tensor(left, dtype=torch.long))
+        self.register_buffer("_right_idx", torch.tensor(right, dtype=torch.long))
+        self.register_buffer("_down_idx", torch.tensor(down, dtype=torch.long))
+        self.register_buffer("_up_idx", torch.tensor(up, dtype=torch.long))
+
+    def _initialize_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_out", nonlinearity="leaky_relu"
+                )
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(
+                    m.weight, mode="fan_in", nonlinearity="leaky_relu"
+                )
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(
+        self,
+        noisy_signals: torch.Tensor,
+        coordinates: torch.Tensor,
+    ) -> torch.Tensor:
+        B, R, T = noisy_signals.shape
+
+        x = noisy_signals.view(B * R, 1, T)
+        e1 = self.enc1(x)
+        e2 = self.enc2(e1)
+        e3 = self.enc3(e2)
+        e4 = self.enc4(e3)
+        e5 = self.enc5(e4)
+
+        local_channel_desc = e5.mean(dim=2)
+        local_channel_desc = local_channel_desc.view(B, R, self.latent_channels)
+
+        global_ctx, _ = torch.max(local_channel_desc, dim=1, keepdim=True)
+        global_ctx = global_ctx.expand(-1, R, -1)
+        coord_emb = self.coord_mlp(coordinates)
+
+        mod_input = torch.cat([global_ctx, coord_emb], dim=-1)
+        shift = self.spatial_modulator(mod_input)
+        shift_expanded = shift.view(B * R, self.latent_channels, 1)
+        modified_latent = e5 + shift_expanded
+
+        d5 = self.dec5(modified_latent)
+        d4 = self.dec4(d5)
+        d3 = self.dec3(d4)
+        d2 = self.dec2(d3)
+        d1 = self.dec1(d2)
+        return d1.view(B, R, T)
+
+    def compute_wave_equation_residual(
+        self,
+        denoised: torch.Tensor,
+        grid_indices: Optional[torch.Tensor] = None,
+        grid_cols: int = 41,
+        grid_rows: int = 41,
+    ) -> torch.Tensor:
+        del grid_indices, grid_cols, grid_rows
+
+        B, _, T = denoised.shape
+        c2 = self.wave_speed**2
+
+        u_c = denoised[:, self._interior_idx, :]
+        u_l = denoised[:, self._left_idx, :]
+        u_r = denoised[:, self._right_idx, :]
+        u_d = denoised[:, self._down_idx, :]
+        u_u = denoised[:, self._up_idx, :]
+
+        u_tt = (u_c[:, :, 2:] - 2.0 * u_c[:, :, 1:-1] + u_c[:, :, :-2]) / (self.dt**2)
+        u_xx = (u_r[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_l[:, :, 1:-1]) / (
+            self.dx**2
+        )
+        u_yy = (u_u[:, :, 1:-1] - 2.0 * u_c[:, :, 1:-1] + u_d[:, :, 1:-1]) / (
+            self.dy**2
+        )
+        residual = (u_tt - c2 * (u_xx + u_yy)) / (self.omega0**2)
+
+        with torch.no_grad():
+            n_int = u_c.shape[1]
+            u_flat = u_c.reshape(B * n_int, 1, T)
+            energy = torch.nn.functional.avg_pool1d(
+                u_flat.abs(), kernel_size=9, stride=1, padding=4
+            )
+            mask = energy / energy.amax(dim=-1, keepdim=True).clamp_min(1e-6)
+            mask = mask.view(B, n_int, T)[:, :, 1:-1]
+
+        return residual * mask
+
+    def physics_forward(
+        self,
+        noisy_signals: torch.Tensor,
+        coordinates: torch.Tensor,
+        grid_indices: Optional[torch.Tensor] = None,
+        grid_cols: int = 41,
+        grid_rows: int = 41,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        denoised = self.forward(noisy_signals, coordinates)
+        residual = self.compute_wave_equation_residual(
+            denoised, grid_indices=grid_indices, grid_cols=grid_cols, grid_rows=grid_rows
+        )
+        return denoised, residual
+
+
+# Improved names with compatibility aliases retained below.
+class SetInvariantWavePINN(DeepSetsPINN):
+    """Preferred name for the set-invariant wave-equation PINN model."""
+
+
+class SpatialContextCAE(SpatialAuxiliaryCAE):
+    """Preferred name for the spatially modulated DeepCAE variant."""
 
 
 def count_parameters(model: nn.Module) -> int:

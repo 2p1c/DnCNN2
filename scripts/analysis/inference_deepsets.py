@@ -19,12 +19,16 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 import argparse
 import numpy as np
 import torch
+import torch.nn as nn
 from scipy import io as sio
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple
 
-from model.model_deepsets import DeepSetsPINN, SpatialAuxiliaryCAE
+from model.model import (
+    SetInvariantWavePINN,
+    SpatialContextCAE,
+)
 from data import GRID_SPACING
 from scripts.transformer import (
     load_mat_file,
@@ -50,7 +54,7 @@ CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
 def load_model(
     checkpoint_path: str,
     device: torch.device = None,
-) -> Tuple[DeepSetsPINN, dict]:
+) -> Tuple[nn.Module, dict]:
     """
     Load trained DeepSets PINN from checkpoint.
 
@@ -78,12 +82,12 @@ def load_model(
     dx = ckpt.get("dx", GRID_SPACING)
     dy = ckpt.get("dy", GRID_SPACING)
     wave_speed = ckpt.get("wave_speed", 5900.0)
-    model_type = ckpt.get("model_type", "deepsets")  # backward compat
+    model_type = str(ckpt.get("model_type", "deepsets")).strip().lower()
 
-    if model_type == "spatial_cae":
+    if model_type in {"spatial_cae", "spatial_context_cae"}:
         base_channels = ckpt.get("base_channels", 32)
         coord_dim = ckpt.get("coord_dim", 64)
-        model = SpatialAuxiliaryCAE(
+        model = SpatialContextCAE(
             base_channels=base_channels,
             coord_dim=coord_dim,
             dropout_rate=0.0,
@@ -92,7 +96,7 @@ def load_model(
             dy=dy,
         )
     else:
-        model = DeepSetsPINN(
+        model = SetInvariantWavePINN(
             dropout_rate=0.0,  # No dropout at inference
             wave_speed=wave_speed,
             dx=dx,
@@ -193,7 +197,7 @@ def preprocess_mat_data(
 
 
 def denoise_grid(
-    model: DeepSetsPINN,
+    model: nn.Module,
     normalised_signals: np.ndarray,
     grid_cols: int = 41,
     grid_rows: int = 41,
@@ -208,7 +212,7 @@ def denoise_grid(
     prediction.
 
     Args:
-        model: Trained DeepSetsPINN
+        model: Trained denoising model
         normalised_signals: (n_signals, T) normalised input
         grid_cols, grid_rows: Grid dimensions
         patch_size: Patch side length
