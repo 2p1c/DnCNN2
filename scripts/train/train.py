@@ -1,41 +1,24 @@
-"""
-Training Pipeline for Ultrasonic Signal Denoising CAE
+"""Unified training entry for PINN and DeepSets-PINN pipelines."""
 
-Includes:
-- Training loop with PSNR monitoring
-- Pre-training visualization (noisy vs clean samples)
-- Post-training results visualization (noisy vs clean vs denoised)
-- Model checkpoint saving with best validation PSNR
+from __future__ import annotations
 
-Usage:
-    uv run python train.py
-"""
-
+import argparse
 import sys
 from pathlib import Path
+from typing import Dict, Tuple
 
-# Add project root to sys.path so modules like model, data_utils can be imported
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-import matplotlib.pyplot as plt
-import inspect
-import secrets
-from pathlib import Path
-from typing import Tuple, Optional, Dict
 from tqdm import tqdm
 
-from data import create_dataloaders
-from model.model import (
-    DeepCAE,
-    DeeperCAE,
-    LightweightCAE,
-    UnsupervisedDeepCAE,
-    count_parameters,
-)
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
+from data import GRID_SPACING, create_dataloaders, create_deepsets_dataloaders
+from model.model import DeepCAE_PINN, DeepSetsPINN, count_parameters
+from scripts.analysis import acoustic_validation as av
 from scripts.analysis.acoustic_validation import run_acoustic_validation
 from scripts.train.visualization import plot_results
 
@@ -45,35 +28,20 @@ IMAGES_DIR = RESULTS_DIR / "images"
 CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
 
 
-def _image_path(filename: str) -> str:
-    """Build a default image output path under results/images."""
-    return str(IMAGES_DIR / filename)
-
-
 def _ensure_parent_dir(path: str) -> None:
-    """Create parent directory for an output file path if needed."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def _resolve_image_dir(checkpoint_dir: str) -> Path:
+    ckpt_path = Path(checkpoint_dir)
+    if ckpt_path.name == "checkpoints":
+        return ckpt_path.parent / "images"
+    return RESULTS_DIR / "images"
 
 
 def calculate_psnr(
     clean: torch.Tensor, denoised: torch.Tensor, max_val: float = 1.0
 ) -> float:
-    """
-    Calculate Peak Signal-to-Noise Ratio (PSNR).
-
-    PSNR = 10 * log10(MAX² / MSE)
-
-    Higher PSNR indicates better reconstruction quality.
-    Typical values: 20-40 dB for good denoising.
-
-    Args:
-        clean: Ground truth signal tensor
-        denoised: Denoised/reconstructed signal tensor
-        max_val: Maximum possible pixel/signal value (1.0 for normalized)
-
-    Returns:
-        PSNR value in dB
-    """
     mse = torch.mean((clean - denoised) ** 2).item()
     if mse < 1e-10:
         return float("inf")
@@ -81,18 +49,6 @@ def calculate_psnr(
 
 
 def calculate_snr(signal: torch.Tensor, noise: torch.Tensor) -> float:
-    """
-    Calculate Signal-to-Noise Ratio.
-
-    SNR = 10 * log10(P_signal / P_noise)
-
-    Args:
-        signal: Clean signal tensor
-        noise: Noise tensor (noisy - clean)
-
-    Returns:
-        SNR value in dB
-    """
     signal_power = torch.mean(signal**2).item()
     noise_power = torch.mean(noise**2).item()
     if noise_power < 1e-10:
@@ -102,61 +58,38 @@ def calculate_snr(signal: torch.Tensor, noise: torch.Tensor) -> float:
 
 def plot_pre_training_samples(
     dataloader: torch.utils.data.DataLoader,
-    save_path: str = _image_path("fig_pre_train_samples.png"),
+    save_path: str,
     num_samples: int = 3,
 ) -> None:
-    """
-    Plot noisy vs clean samples before training starts.
-
-    This visualization helps verify that:
-    1. Data generation is working correctly
-    2. Noise levels are appropriate
-    3. Signal features are visible
-
-    Args:
-        dataloader: DataLoader to sample from
-        save_path: Path to save the figure
-        num_samples: Number of sample pairs to plot
-    """
-    # Get one batch of data
     noisy, clean = next(iter(dataloader))
-
-    # Create figure with 2 columns: Noisy | Clean
+    num_samples = min(num_samples, noisy.shape[0])
     fig, axes = plt.subplots(num_samples, 2, figsize=(14, 3 * num_samples))
+    if num_samples == 1:
+        axes = np.array([axes])
     fig.suptitle(
         "Pre-Training Samples: Noisy Input vs Clean Ground Truth",
         fontsize=14,
         fontweight="bold",
     )
-
-    # Time axis (in microseconds for display)
-    time_us = np.linspace(0, 160, 1000)  # 160 μs duration
+    time_us = np.linspace(0, 160, noisy.shape[-1])
 
     for i in range(num_samples):
-        noisy_signal = noisy[i, 0].numpy()
-        clean_signal = clean[i, 0].numpy()
-
-        # Calculate input SNR
+        noisy_signal = noisy[i, 0].cpu().numpy()
+        clean_signal = clean[i, 0].cpu().numpy()
         noise = noisy_signal - clean_signal
         snr = calculate_snr(torch.from_numpy(clean_signal), torch.from_numpy(noise))
 
-        # Plot noisy signal
         axes[i, 0].plot(time_us, noisy_signal, "b-", linewidth=0.7, alpha=0.8)
         axes[i, 0].set_title(f"Sample {i + 1}: Noisy Input (SNR: {snr:.1f} dB)")
-        axes[i, 0].set_xlabel("Time (μs)")
+        axes[i, 0].set_xlabel("Time (us)")
         axes[i, 0].set_ylabel("Amplitude")
-        axes[i, 0].set_ylim(-2.5, 2.5)
         axes[i, 0].grid(True, alpha=0.3)
-        axes[i, 0].axhline(y=0, color="k", linewidth=0.5, alpha=0.3)
 
-        # Plot clean signal
         axes[i, 1].plot(time_us, clean_signal, "g-", linewidth=0.8)
         axes[i, 1].set_title(f"Sample {i + 1}: Clean Ground Truth")
-        axes[i, 1].set_xlabel("Time (μs)")
+        axes[i, 1].set_xlabel("Time (us)")
         axes[i, 1].set_ylabel("Amplitude")
-        axes[i, 1].set_ylim(-2.5, 2.5)
         axes[i, 1].grid(True, alpha=0.3)
-        axes[i, 1].axhline(y=0, color="k", linewidth=0.5, alpha=0.3)
 
     plt.tight_layout()
     _ensure_parent_dir(save_path)
@@ -165,39 +98,246 @@ def plot_pre_training_samples(
     print(f"[INFO] Saved pre-training samples to {save_path}")
 
 
-def plot_training_curves(
-    history: Dict[str, list], save_path: str = _image_path("fig_training_curves.png")
+def plot_pre_training_samples_deepsets(
+    dataloader: torch.utils.data.DataLoader,
+    save_path: str,
+    num_samples: int = 3,
 ) -> None:
-    """
-    Plot training and validation loss/PSNR curves.
+    batch = next(iter(dataloader))
+    noisy = batch["noisy_signals"]
+    clean = batch["clean_signals"]
 
-    Args:
-        history: Dictionary containing 'train_loss', 'val_loss', 'train_psnr', 'val_psnr'
-        save_path: Path to save the figure
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    fig.suptitle("Training Progress", fontsize=14, fontweight="bold")
+    num_samples = min(num_samples, noisy.shape[0])
+    fig, axes = plt.subplots(num_samples, 2, figsize=(14, 3 * num_samples))
+    if num_samples == 1:
+        axes = np.array([axes])
 
-    epochs = range(1, len(history["train_loss"]) + 1)
+    fig.suptitle(
+        "Pre-Training Samples: Noisy Input vs Clean Ground Truth",
+        fontsize=14,
+        fontweight="bold",
+    )
+    time_us = np.linspace(0, 160, noisy.shape[-1])
 
-    # Loss curve
-    axes[0].plot(epochs, history["train_loss"], "b-", label="Train Loss", linewidth=1.5)
-    axes[0].plot(epochs, history["val_loss"], "r-", label="Val Loss", linewidth=1.5)
-    axes[0].set_xlabel("Epoch")
-    axes[0].set_ylabel("MSE Loss")
-    axes[0].set_title("Loss Curve")
+    for i in range(num_samples):
+        center = noisy.shape[1] // 2
+        noisy_signal = noisy[i, center].cpu().numpy()
+        clean_signal = clean[i, center].cpu().numpy()
+        noise = noisy_signal - clean_signal
+        snr = calculate_snr(torch.from_numpy(clean_signal), torch.from_numpy(noise))
+
+        axes[i, 0].plot(time_us, noisy_signal, "b-", linewidth=0.7, alpha=0.8)
+        axes[i, 0].set_title(f"Sample {i + 1}: Noisy Input (SNR: {snr:.1f} dB)")
+        axes[i, 0].set_xlabel("Time (us)")
+        axes[i, 0].set_ylabel("Amplitude")
+        axes[i, 0].grid(True, alpha=0.3)
+
+        axes[i, 1].plot(time_us, clean_signal, "g-", linewidth=0.8)
+        axes[i, 1].set_title(f"Sample {i + 1}: Clean Ground Truth")
+        axes[i, 1].set_xlabel("Time (us)")
+        axes[i, 1].set_ylabel("Amplitude")
+        axes[i, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    _ensure_parent_dir(save_path)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close()
+    print(f"[INFO] Saved pre-training samples to {save_path}")
+
+
+class PINNLoss(nn.Module):
+    def __init__(self, physics_weight: float = 0.001):
+        super().__init__()
+        self.data_loss_fn = nn.MSELoss()
+        self.physics_weight = physics_weight
+
+    def forward(
+        self, denoised: torch.Tensor, clean: torch.Tensor, residual: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        data_loss = self.data_loss_fn(denoised, clean)
+        physics_loss = torch.mean(residual**2)
+        total = data_loss + self.physics_weight * physics_loss
+        return total, data_loss, physics_loss
+
+
+class DeepSetsPINNLoss(nn.Module):
+    def __init__(self, physics_weight: float = 0.001):
+        super().__init__()
+        self.data_loss_fn = nn.MSELoss()
+        self.physics_weight = physics_weight
+
+    def forward(
+        self, denoised: torch.Tensor, clean: torch.Tensor, residual: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        data_loss = self.data_loss_fn(denoised, clean)
+        physics_loss = torch.mean(residual**2)
+        total = data_loss + self.physics_weight * physics_loss
+        return total, data_loss, physics_loss
+
+
+def train_epoch_pinn(
+    model: DeepCAE_PINN,
+    dataloader: torch.utils.data.DataLoader,
+    criterion: PINNLoss,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+) -> Tuple[float, float, float, float]:
+    model.train()
+    total_sum, data_sum, phys_sum, psnr_sum, n = 0.0, 0.0, 0.0, 0.0, 0
+    for noisy, clean in dataloader:
+        noisy = noisy.to(device)
+        clean = clean.to(device)
+        denoised, residual = model.physics_forward(noisy)
+        total, data_loss, phys_loss = criterion(denoised, clean, residual)
+
+        optimizer.zero_grad()
+        total.backward()
+        optimizer.step()
+
+        total_sum += total.item()
+        data_sum += data_loss.item()
+        phys_sum += phys_loss.item()
+        psnr_sum += calculate_psnr(clean, denoised)
+        n += 1
+
+    return total_sum / n, data_sum / n, phys_sum / n, psnr_sum / n
+
+
+def validate_pinn(
+    model: DeepCAE_PINN,
+    dataloader: torch.utils.data.DataLoader,
+    criterion: PINNLoss,
+    device: torch.device,
+) -> Tuple[float, float, float, float]:
+    model.eval()
+    total_sum, data_sum, phys_sum, psnr_sum, n = 0.0, 0.0, 0.0, 0.0, 0
+    with torch.no_grad():
+        for noisy, clean in dataloader:
+            noisy = noisy.to(device)
+            clean = clean.to(device)
+            denoised, residual = model.physics_forward(noisy)
+            total, data_loss, phys_loss = criterion(denoised, clean, residual)
+            total_sum += total.item()
+            data_sum += data_loss.item()
+            phys_sum += phys_loss.item()
+            psnr_sum += calculate_psnr(clean, denoised)
+            n += 1
+    return total_sum / n, data_sum / n, phys_sum / n, psnr_sum / n
+
+
+def train_epoch_deepsets(
+    model: DeepSetsPINN,
+    dataloader: torch.utils.data.DataLoader,
+    criterion: DeepSetsPINNLoss,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+    grid_cols: int,
+    grid_rows: int,
+) -> Tuple[float, float, float, float]:
+    model.train()
+    total_sum, data_sum, phys_sum, psnr_sum, n = 0.0, 0.0, 0.0, 0.0, 0
+    for batch in dataloader:
+        noisy = batch["noisy_signals"].to(device)
+        clean = batch["clean_signals"].to(device)
+        coords = batch["coordinates"].to(device)
+        grid_idx = batch["grid_indices"].to(device)
+
+        denoised, residual = model.physics_forward(
+            noisy, coords, grid_idx, grid_cols, grid_rows
+        )
+        total, data_loss, phys_loss = criterion(denoised, clean, residual)
+
+        optimizer.zero_grad()
+        total.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_sum += total.item()
+        data_sum += data_loss.item()
+        phys_sum += phys_loss.item()
+        psnr_sum += calculate_psnr(clean, denoised)
+        n += 1
+
+    return total_sum / n, data_sum / n, phys_sum / n, psnr_sum / n
+
+
+def validate_deepsets(
+    model: DeepSetsPINN,
+    dataloader: torch.utils.data.DataLoader,
+    criterion: DeepSetsPINNLoss,
+    device: torch.device,
+    grid_cols: int,
+    grid_rows: int,
+) -> Tuple[float, float, float, float]:
+    model.eval()
+    total_sum, data_sum, phys_sum, psnr_sum, n = 0.0, 0.0, 0.0, 0.0, 0
+    with torch.no_grad():
+        for batch in dataloader:
+            noisy = batch["noisy_signals"].to(device)
+            clean = batch["clean_signals"].to(device)
+            coords = batch["coordinates"].to(device)
+            grid_idx = batch["grid_indices"].to(device)
+            denoised, residual = model.physics_forward(
+                noisy, coords, grid_idx, grid_cols, grid_rows
+            )
+            total, data_loss, phys_loss = criterion(denoised, clean, residual)
+
+            total_sum += total.item()
+            data_sum += data_loss.item()
+            phys_sum += phys_loss.item()
+            psnr_sum += calculate_psnr(clean, denoised)
+            n += 1
+    return total_sum / n, data_sum / n, phys_sum / n, psnr_sum / n
+
+
+def plot_pinn_training_curves(history: Dict[str, list], save_path: str) -> None:
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle("PINN Training Progress", fontsize=14, fontweight="bold")
+    epochs = range(1, len(history["train_total_loss"]) + 1)
+
+    axes[0].plot(
+        epochs, history["train_total_loss"], "b-", label="Train Total", linewidth=1.5
+    )
+    axes[0].plot(
+        epochs, history["val_total_loss"], "r-", label="Val Total", linewidth=1.5
+    )
+    axes[0].set_title("Total Loss")
+    axes[0].set_yscale("log")
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
-    axes[0].set_yscale("log")
 
-    # PSNR curve
-    axes[1].plot(epochs, history["train_psnr"], "b-", label="Train PSNR", linewidth=1.5)
-    axes[1].plot(epochs, history["val_psnr"], "r-", label="Val PSNR", linewidth=1.5)
-    axes[1].set_xlabel("Epoch")
-    axes[1].set_ylabel("PSNR (dB)")
-    axes[1].set_title("PSNR Curve")
-    axes[1].legend()
+    axes[1].plot(
+        epochs, history["train_data_loss"], "b-", label="Train Data", linewidth=1.5
+    )
+    axes[1].plot(
+        epochs, history["val_data_loss"], "r-", label="Val Data", linewidth=1.5
+    )
+    axes[1].plot(
+        epochs,
+        history["train_physics_loss"],
+        "b--",
+        label="Train Physics",
+        linewidth=1.0,
+        alpha=0.7,
+    )
+    axes[1].plot(
+        epochs,
+        history["val_physics_loss"],
+        "r--",
+        label="Val Physics",
+        linewidth=1.0,
+        alpha=0.7,
+    )
+    axes[1].set_title("Loss Decomposition")
+    axes[1].set_yscale("log")
+    axes[1].legend(fontsize=8)
     axes[1].grid(True, alpha=0.3)
+
+    axes[2].plot(epochs, history["train_psnr"], "b-", label="Train PSNR", linewidth=1.5)
+    axes[2].plot(epochs, history["val_psnr"], "r-", label="Val PSNR", linewidth=1.5)
+    axes[2].set_title("PSNR Curve")
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
     _ensure_parent_dir(save_path)
@@ -206,99 +346,234 @@ def plot_training_curves(
     print(f"[INFO] Saved training curves to {save_path}")
 
 
-def train_epoch(
-    model: nn.Module,
+def plot_deepsets_sample_results(
+    model: DeepSetsPINN,
     dataloader: torch.utils.data.DataLoader,
-    criterion: nn.Module,
-    optimizer: optim.Optimizer,
     device: torch.device,
-    unsupervised: bool = False,
-) -> Tuple[float, float]:
-    """
-    Train for one epoch.
-
-    Args:
-        model: Model to train
-        dataloader: Training dataloader
-        criterion: Loss function (MSE)
-        optimizer: Optimizer (Adam)
-        device: Device to train on
-        unsupervised: If True, use noisy input as reconstruction target
-
-    Returns:
-        Tuple of (average_loss, average_psnr)
-    """
-    model.train()
-    total_loss = 0.0
-    total_psnr = 0.0
-    num_batches = 0
-
-    for noisy, clean in dataloader:
-        noisy = noisy.to(device)
-        clean = clean.to(device)
-
-        target = noisy if unsupervised else clean
-
-        # Forward pass
-        denoised = model(noisy)
-        loss = criterion(denoised, target)
-
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Accumulate metrics
-        total_loss += loss.item()
-        total_psnr += calculate_psnr(clean, denoised)
-        num_batches += 1
-
-    return total_loss / num_batches, total_psnr / num_batches
-
-
-def validate(
-    model: nn.Module,
-    dataloader: torch.utils.data.DataLoader,
-    criterion: nn.Module,
-    device: torch.device,
-    unsupervised: bool = False,
-) -> Tuple[float, float]:
-    """
-    Validate the model on validation set.
-
-    Args:
-        model: Model to validate
-        dataloader: Validation dataloader
-        criterion: Loss function
-        device: Device to run on
-        unsupervised: If True, use noisy input as reconstruction target
-
-    Returns:
-        Tuple of (average_loss, average_psnr)
-    """
+    save_path: str,
+    n_samples: int = 6,
+) -> None:
     model.eval()
-    total_loss = 0.0
-    total_psnr = 0.0
-    num_batches = 0
+    all_noisy, all_clean, all_coords = [], [], []
+    for batch in dataloader:
+        all_noisy.append(batch["noisy_signals"])
+        all_clean.append(batch["clean_signals"])
+        all_coords.append(batch["coordinates"])
+        if len(all_noisy) * batch["noisy_signals"].shape[0] >= 100:
+            break
+
+    all_noisy = torch.cat(all_noisy, dim=0)
+    all_clean = torch.cat(all_clean, dim=0)
+    all_coords = torch.cat(all_coords, dim=0)
+    total = all_noisy.shape[0]
+    n_samples = min(n_samples, total)
+    idx = np.random.choice(total, size=n_samples, replace=False)
+
+    noisy = all_noisy[idx]
+    clean = all_clean[idx]
+    coords = all_coords[idx]
 
     with torch.no_grad():
-        for noisy, clean in dataloader:
-            noisy = noisy.to(device)
-            clean = clean.to(device)
+        denoised = model(noisy.to(device), coords.to(device))
 
-            target = noisy if unsupervised else clean
+    noisy_np = noisy.cpu().numpy()
+    clean_np = clean.cpu().numpy()
+    denoised_np = denoised.cpu().numpy()
 
-            denoised = model(noisy)
-            loss = criterion(denoised, target)
+    time_us = np.linspace(0, 160, noisy_np.shape[-1])
+    fig, axes = plt.subplots(3, n_samples, figsize=(4 * n_samples, 10))
+    if n_samples == 1:
+        axes = np.array([[axes[0]], [axes[1]], [axes[2]]])
 
-            total_loss += loss.item()
-            total_psnr += calculate_psnr(clean, denoised)
-            num_batches += 1
+    row_titles = ["Noisy Input", "Clean Ground Truth", "Denoised Output"]
+    colors = ["blue", "green", "red"]
+    for col in range(n_samples):
+        center = noisy_np[col].shape[0] // 2
+        signals = [
+            noisy_np[col, center],
+            clean_np[col, center],
+            denoised_np[col, center],
+        ]
+        psnr = calculate_psnr(
+            torch.from_numpy(clean_np[col, center : center + 1]),
+            torch.from_numpy(denoised_np[col, center : center + 1]),
+        )
+        input_noise = signals[0] - signals[1]
+        input_snr = calculate_snr(
+            torch.from_numpy(signals[1]), torch.from_numpy(input_noise)
+        )
 
-    return total_loss / num_batches, total_psnr / num_batches
+        for row in range(3):
+            ax = axes[row, col]
+            ax.plot(time_us, signals[row], color=colors[row], linewidth=0.7)
+            if row == 0:
+                ax.set_title(
+                    f"Sample {col + 1}\\n{row_titles[row]}\\n(Input SNR: {input_snr:.1f} dB)",
+                    fontsize=10,
+                )
+            elif row == 2:
+                ax.set_title(f"{row_titles[row]}\\n(PSNR: {psnr:.2f} dB)", fontsize=10)
+            else:
+                ax.set_title(row_titles[row], fontsize=10)
+            ax.set_xlabel("Time (us)")
+            ax.set_ylabel("Amplitude")
+            ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    _ensure_parent_dir(save_path)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close()
+    print(f"[INFO] Saved sample results to {save_path}")
 
 
-def train(
+def run_deepsets_acoustic_validation(
+    model: DeepSetsPINN,
+    dataloader: torch.utils.data.DataLoader,
+    device: torch.device,
+    save_path: str,
+    num_samples: int = 20,
+) -> Dict[str, object]:
+    model.eval()
+    all_noisy, all_clean, all_coords = [], [], []
+    for batch in dataloader:
+        all_noisy.append(batch["noisy_signals"])
+        all_clean.append(batch["clean_signals"])
+        all_coords.append(batch["coordinates"])
+        if sum(x.shape[0] for x in all_noisy) >= 100:
+            break
+
+    all_noisy = torch.cat(all_noisy, dim=0)
+    all_clean = torch.cat(all_clean, dim=0)
+    all_coords = torch.cat(all_coords, dim=0)
+    n = min(num_samples, all_noisy.shape[0])
+    indices = np.random.choice(all_noisy.shape[0], size=n, replace=False)
+
+    noisy = all_noisy[indices]
+    clean = all_clean[indices]
+    coords = all_coords[indices]
+
+    with torch.no_grad():
+        predicted = model(noisy.to(device), coords.to(device))
+
+    center = noisy.shape[1] // 2
+    inp_np = noisy.cpu().numpy()[:, center, :]
+    tgt_np = clean.cpu().numpy()[:, center, :]
+    pred_np = predicted.cpu().numpy()[:, center, :]
+
+    all_features = []
+    xcorr_tp_list, env_corr_tp_list, coherence_tp_list = [], [], []
+    arrival_errors, peak_pres_list, rms_pres_list = [], [], []
+    dom_freq_pres_list, energy_match_list = [], []
+
+    for i in range(n):
+        all_features.append(
+            {
+                "input": av._extract_all_features(inp_np[i]),
+                "target": av._extract_all_features(tgt_np[i]),
+                "predicted": av._extract_all_features(pred_np[i]),
+            }
+        )
+
+        peak_corr, _ = av._cross_correlation_peak(tgt_np[i], pred_np[i])
+        xcorr_tp_list.append(peak_corr)
+        env_corr_tp_list.append(av._envelope_correlation(tgt_np[i], pred_np[i]))
+
+        freq_coh, coh = av._spectral_coherence(tgt_np[i], pred_np[i])
+        signal_band = (freq_coh >= 100e3) & (freq_coh <= 500e3)
+        avg_coh = float(np.mean(coh[signal_band])) if np.any(signal_band) else 0.0
+        coherence_tp_list.append(avg_coh)
+
+        fa = all_features[i]
+        arr_tgt = fa["target"]["arrival_time_us"]
+        arr_pred = fa["predicted"]["arrival_time_us"]
+        if not np.isnan(arr_tgt) and not np.isnan(arr_pred):
+            arrival_errors.append(abs(arr_tgt - arr_pred))
+
+        tgt_peak = fa["target"]["peak_amplitude"]
+        pred_peak = fa["predicted"]["peak_amplitude"]
+        if tgt_peak > 1e-10 and pred_peak > 1e-10:
+            peak_pres_list.append(min(pred_peak / tgt_peak, tgt_peak / pred_peak) * 100)
+
+        tgt_rms = fa["target"]["rms"]
+        pred_rms = fa["predicted"]["rms"]
+        if tgt_rms > 1e-10 and pred_rms > 1e-10:
+            rms_pres_list.append(min(pred_rms / tgt_rms, tgt_rms / pred_rms) * 100)
+
+        tgt_df = fa["target"]["dominant_freq_khz"]
+        pred_df = fa["predicted"]["dominant_freq_khz"]
+        if tgt_df > 1e-3 and pred_df > 1e-3:
+            dom_freq_pres_list.append(min(pred_df / tgt_df, tgt_df / pred_df) * 100)
+
+        tgt_sub = np.array(
+            [fa["target"].get(f"energy_ratio_{band}", 0) for band in av.SUB_BAND_LABELS]
+        )
+        pred_sub = np.array(
+            [
+                fa["predicted"].get(f"energy_ratio_{band}", 0)
+                for band in av.SUB_BAND_LABELS
+            ]
+        )
+        denom_cos = np.linalg.norm(tgt_sub) * np.linalg.norm(pred_sub)
+        if denom_cos > 1e-10:
+            energy_match_list.append(float(np.dot(tgt_sub, pred_sub) / denom_cos) * 100)
+
+    quality_metrics = {
+        "per_sample": {
+            "xcorr_target_pred": xcorr_tp_list,
+            "envelope_corr_target_pred": env_corr_tp_list,
+            "avg_coherence_target_pred": coherence_tp_list,
+        },
+        "averaged": {
+            "xcorr_target_pred": float(np.mean(xcorr_tp_list))
+            if xcorr_tp_list
+            else 0.0,
+            "envelope_corr_target_pred": float(np.mean(env_corr_tp_list))
+            if env_corr_tp_list
+            else 0.0,
+            "avg_coherence_target_pred": float(np.mean(coherence_tp_list))
+            if coherence_tp_list
+            else 0.0,
+            "arrival_time_error_us": float(np.mean(arrival_errors))
+            if arrival_errors
+            else float("nan"),
+            "peak_amplitude_preservation": float(np.mean(peak_pres_list))
+            if peak_pres_list
+            else 0.0,
+            "rms_preservation": float(np.mean(rms_pres_list)) if rms_pres_list else 0.0,
+            "dominant_freq_preservation": float(np.mean(dom_freq_pres_list))
+            if dom_freq_pres_list
+            else 0.0,
+            "energy_distribution_match": float(np.mean(energy_match_list))
+            if energy_match_list
+            else 0.0,
+        },
+    }
+
+    av._plot_validation_figure(
+        input_signals=inp_np,
+        target_signals=tgt_np,
+        predicted_signals=pred_np,
+        all_features=all_features,
+        quality_metrics=quality_metrics,
+        save_path=save_path,
+    )
+    av._print_report(quality_metrics)
+    return {"features": all_features, "quality_metrics": quality_metrics}
+
+
+def _select_device() -> torch.device:
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print(f"[INFO] Using CUDA: {torch.cuda.get_device_name(0)}")
+        return device
+    if torch.backends.mps.is_available():
+        print("[INFO] Using Apple MPS (Metal Performance Shaders)")
+        return torch.device("mps")
+    print("[INFO] Using CPU")
+    return torch.device("cpu")
+
+
+def train_pinn(
     num_epochs: int = 50,
     batch_size: int = 32,
     learning_rate: float = 0.001,
@@ -306,502 +581,461 @@ def train(
     num_val: int = 1000,
     save_best: bool = True,
     checkpoint_dir: str = str(CHECKPOINTS_DIR),
-    use_deeper_model: bool = False,
-    model_type: str = "lightweight",  # 'lightweight', 'deeper', 'deep', 'unsupervised_deep'
-    seed: Optional[int] = None,
-    data_mode: str = "file",
-    data_path: Optional[str] = "data",
-    early_stopping_patience: int = 50,  # More patient: wait 50 epochs without improvement
-    min_epochs: int = 30,  # Minimum epochs before early stopping can trigger
-    dropout_rate: float = 0.1,  # Lower dropout (0.1) - 0.4 was too aggressive
-    augment: bool = False,  # Enable data augmentation for training set
+    seed: int = 42,
+    data_mode: str = "synthetic",
+    data_path: str | None = None,
+    early_stopping_patience: int = 50,
+    min_epochs: int = 30,
+    dropout_rate: float = 0.1,
+    augment: bool = False,
+    physics_weight: float = 0.001,
+    wave_speed: float = 5900.0,
+    center_frequency: float = 250e3,
+    damping_ratio: float = 0.05,
 ) -> Tuple[nn.Module, Dict[str, list]]:
-    """
-    Main training function.
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    device = _select_device()
 
-    Implements the complete training pipeline:
-    1. Setup device and dataloaders
-    2. Initialize model, loss, optimizer
-    3. Generate pre-training visualization
-    4. Training loop with validation
-    5. Save best model checkpoint
-    6. Generate post-training visualization
-
-    Args:
-        num_epochs: Number of training epochs
-        batch_size: Batch size for training
-        learning_rate: Learning rate for Adam optimizer
-        num_train: Number of synthetic training samples (only for synthetic mode)
-        num_val: Number of synthetic validation samples (only for synthetic mode)
-        save_best: Whether to save best model based on val PSNR
-        checkpoint_dir: Directory to save model checkpoints
-        use_deeper_model: Deprecated, use model_type instead
-        model_type: Model architecture - 'lightweight' (3层), 'deeper' (4层), 'deep' (5层), 'unsupervised_deep' (无监督5层)
-        seed: Random seed for reproducibility. If None or negative, generate a random seed.
-        data_mode: 'synthetic' or 'file'
-        data_path: Path to data directory (for file mode, output of transformer.py)
-        early_stopping_patience: Stop training if validation PSNR doesn't improve for N epochs
-        dropout_rate: Dropout probability for model regularization (higher = more regularization)
-
-    Returns:
-        Tuple of (trained_model, training_history)
-    """
-    # Set seeds for reproducibility (or randomize when seed is None/negative)
-    if seed is None or seed < 0:
-        resolved_seed = int(secrets.randbits(32))
-        print(f"[INFO] Random seed generated: {resolved_seed}")
-    else:
-        resolved_seed = int(seed)
-        if resolved_seed > 2**32 - 1:
-            raise ValueError("seed must be <= 2**32 - 1")
-        print(f"[INFO] Using fixed seed: {resolved_seed}")
-
-    torch.manual_seed(resolved_seed)
-    np.random.seed(resolved_seed)
-
-    # ============================================================
-    # Device Selection
-    # ============================================================
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"[INFO] Using CUDA: {torch.cuda.get_device_name(0)}")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-        print("[INFO] Using Apple MPS (Metal Performance Shaders)")
-    else:
-        device = torch.device("cpu")
-        print("[INFO] Using CPU")
-
-    # ============================================================
-    # Create Dataloaders
-    # ============================================================
     if data_mode == "file":
-        if data_path is None:
-            data_path = "data"
-            print("[WARNING] data_path is None in file mode, fallback to 'data'.")
         print(f"\n[INFO] Loading experimental data from {data_path}...")
         train_loader, val_loader = create_dataloaders(
             batch_size=batch_size,
-            seed=resolved_seed,
+            seed=seed,
             mode="file",
             data_path=data_path,
             augment=augment,
         )
-        print("[INFO] Data mode: FILE (experimental data)")
-        if augment:
-            print("[INFO] Data augmentation: ENABLED")
     else:
         print("\n[INFO] Creating synthetic datasets...")
         train_loader, val_loader = create_dataloaders(
             num_train=num_train,
             num_val=num_val,
             batch_size=batch_size,
-            seed=resolved_seed,
+            seed=seed,
             mode="synthetic",
             augment=augment,
         )
-        print("[INFO] Data mode: SYNTHETIC")
-        print(f"[INFO] Training samples: {num_train}, Validation samples: {num_val}")
-        if augment:
-            print("[INFO] Data augmentation: ENABLED")
 
-    print(f"[INFO] Batch size: {batch_size}")
-    print(f"[INFO] Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
-
-    # ============================================================
-    # Initialize Model
-    # ============================================================
-    # Support legacy use_deeper_model parameter
-    if use_deeper_model and model_type == "lightweight":
-        model_type = "deeper"
-
-    is_unsupervised = model_type == "unsupervised_deep"
-
-    if model_type == "deep":
-        model = DeepCAE(dropout_rate=dropout_rate).to(device)
-        print("\n[INFO] Using DeepCAE model (5层, 宽通道)")
-    elif model_type == "unsupervised_deep":
-        model = UnsupervisedDeepCAE(dropout_rate=dropout_rate).to(device)
-        print("\n[INFO] Using UnsupervisedDeepCAE model (5层, 输入重建)")
-    elif model_type == "deeper":
-        model = DeeperCAE(dropout_rate=dropout_rate).to(device)
-        print("\n[INFO] Using DeeperCAE model (4层)")
-    else:
-        model = LightweightCAE(dropout_rate=dropout_rate).to(device)
-        print("\n[INFO] Using LightweightCAE model (3层)")
-
+    model = DeepCAE_PINN(
+        dropout_rate=dropout_rate,
+        wave_speed=wave_speed,
+        center_frequency=center_frequency,
+        damping_ratio=damping_ratio,
+    ).to(device)
+    print(f"\n[INFO] Model: DeepCAE_PINN")
     print(f"[INFO] Total parameters: {count_parameters(model):,}")
-    print(f"[INFO] Dropout rate: {dropout_rate}")
 
-    # ============================================================
-    # Loss Function and Optimizer
-    # ============================================================
-    criterion = nn.MSELoss()  # Minimizing MSE maximizes PSNR
-    optimizer = optim.Adam(
-        model.parameters(), lr=learning_rate, weight_decay=1e-4
-    )  # Stronger L2 regularization
-
-    # Learning rate scheduler: Cosine Annealing with Warm Restarts
-    # Better for deep networks - allows escaping local minima
+    criterion = PINNLoss(physics_weight=physics_weight)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer,
-        T_0=25,  # Initial restart period
-        T_mult=2,  # Double the period after each restart
-        eta_min=1e-6,  # Minimum learning rate
+        optimizer, T_0=25, T_mult=2, eta_min=1e-6
     )
 
-    print(f"[INFO] Optimizer: Adam (lr={learning_rate}, weight_decay=1e-4)")
-    print("[INFO] Scheduler: CosineAnnealingWarmRestarts (T_0=25)")
-    print(
-        f"[INFO] Early Stopping: patience={early_stopping_patience}, min_epochs={min_epochs}"
-    )
-    if is_unsupervised:
-        print("[INFO] Loss: MSELoss (target = noisy input, unsupervised)")
-    else:
-        print("[INFO] Loss: MSELoss (target = clean signal)")
-
-    # ============================================================
-    # Create Checkpoint Directory
-    # ============================================================
     checkpoint_path = Path(checkpoint_dir)
     checkpoint_path.mkdir(parents=True, exist_ok=True)
+    image_dir = _resolve_image_dir(checkpoint_dir)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    run_image = lambda f: str(image_dir / f)
 
-    # ============================================================
-    # Pre-Training Visualization
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("[INFO] Generating pre-training samples visualization...")
-    print("=" * 60)
-    plot_pre_training_samples(train_loader, _image_path("fig_pre_train_samples.png"))
-
-    # ============================================================
-    # Training Loop
-    # ============================================================
-    print("\n" + "=" * 60)
-    print(f"[INFO] Starting training for {num_epochs} epochs...")
-    print("=" * 60 + "\n")
+    plot_pre_training_samples(train_loader, run_image("fig_pinn_pre_train_samples.png"))
 
     history: Dict[str, list] = {
-        "train_loss": [],
-        "val_loss": [],
+        "train_total_loss": [],
+        "train_data_loss": [],
+        "train_physics_loss": [],
         "train_psnr": [],
+        "val_total_loss": [],
+        "val_data_loss": [],
+        "val_physics_loss": [],
         "val_psnr": [],
     }
-
     best_val_psnr = -float("inf")
-    best_checkpoint_name = (
-        "best_unsupervised_model.pth" if is_unsupervised else "best_model.pth"
-    )
-    early_stopping_counter = 0  # Counter for early stopping
+    early_counter = 0
 
-    # Progress bar
-    pbar = tqdm(range(1, num_epochs + 1), desc="Training", unit="epoch")
-
+    pbar = tqdm(range(1, num_epochs + 1), desc="PINN Training", unit="epoch")
     for epoch in pbar:
-        # Train one epoch
-        train_loss, train_psnr = train_epoch(
-            model,
-            train_loader,
-            criterion,
-            optimizer,
-            device,
-            unsupervised=is_unsupervised,
+        tr_total, tr_data, tr_phys, tr_psnr = train_epoch_pinn(
+            model, train_loader, criterion, optimizer, device
         )
-
-        # Validate
-        val_loss, val_psnr = validate(
-            model,
-            val_loader,
-            criterion,
-            device,
-            unsupervised=is_unsupervised,
+        va_total, va_data, va_phys, va_psnr = validate_pinn(
+            model, val_loader, criterion, device
         )
-
-        # Update learning rate scheduler (CosineAnnealingWarmRestarts uses epoch)
         scheduler.step(epoch)
 
-        # Record history
-        history["train_loss"].append(train_loss)
-        history["val_loss"].append(val_loss)
-        history["train_psnr"].append(train_psnr)
-        history["val_psnr"].append(val_psnr)
+        history["train_total_loss"].append(tr_total)
+        history["train_data_loss"].append(tr_data)
+        history["train_physics_loss"].append(tr_phys)
+        history["train_psnr"].append(tr_psnr)
+        history["val_total_loss"].append(va_total)
+        history["val_data_loss"].append(va_data)
+        history["val_physics_loss"].append(va_phys)
+        history["val_psnr"].append(va_psnr)
 
-        # Update progress bar
         pbar.set_postfix(
-            {"train_loss": f"{train_loss:.6f}", "val_psnr": f"{val_psnr:.2f}dB"}
+            {
+                "total": f"{tr_total:.6f}",
+                "phys": f"{tr_phys:.2e}",
+                "val_psnr": f"{va_psnr:.2f}dB",
+            }
         )
 
-        # Print detailed progress every 10 epochs
-        if epoch % 10 == 0 or epoch == 1:
-            current_lr = optimizer.param_groups[0]["lr"]
-            gap = train_psnr - val_psnr  # Overfitting indicator
-            tqdm.write(
-                f"Epoch [{epoch:3d}/{num_epochs}] | "
-                f"Train Loss: {train_loss:.6f} | Train PSNR: {train_psnr:.2f} dB | "
-                f"Val Loss: {val_loss:.6f} | Val PSNR: {val_psnr:.2f} dB | "
-                f"Gap: {gap:.2f} dB | LR: {current_lr:.2e}"
-            )
-
-        # Save best model and check early stopping
-        if save_best and val_psnr > best_val_psnr:
-            best_val_psnr = val_psnr
-            early_stopping_counter = 0  # Reset counter
+        if save_best and va_psnr > best_val_psnr:
+            best_val_psnr = va_psnr
+            early_counter = 0
             torch.save(
                 {
                     "epoch": epoch,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
-                    "val_psnr": val_psnr,
-                    "val_loss": val_loss,
-                    "train_psnr": train_psnr,
-                    "train_loss": train_loss,
-                    "unsupervised": is_unsupervised,
+                    "val_psnr": va_psnr,
+                    "val_total_loss": va_total,
+                    "val_data_loss": va_data,
+                    "val_physics_loss": va_phys,
+                    "train_psnr": tr_psnr,
+                    "physics_weight": physics_weight,
+                    "wave_speed": wave_speed,
                 },
-                checkpoint_path / best_checkpoint_name,
+                checkpoint_path / "best_pinn_model.pth",
             )
-            tqdm.write(f"  → Saved new best model (Val PSNR: {val_psnr:.2f} dB)")
         else:
-            early_stopping_counter += 1
-            # Only trigger early stopping after minimum epochs
-            if (
-                epoch >= min_epochs
-                and early_stopping_counter >= early_stopping_patience
-            ):
-                tqdm.write(
-                    f"\n[INFO] Early stopping triggered at epoch {epoch}! No improvement for {early_stopping_patience} epochs."
-                )
+            early_counter += 1
+            if epoch >= min_epochs and early_counter >= early_stopping_patience:
                 break
 
-    # ============================================================
-    # Load Best Model
-    # ============================================================
-    if save_best and (checkpoint_path / best_checkpoint_name).exists():
-        checkpoint = torch.load(
-            checkpoint_path / best_checkpoint_name,
-            map_location=device,
-            weights_only=False,  # Trust our own checkpoint
-        )
-        model.load_state_dict(checkpoint["model_state_dict"])
-        print(
-            f"\n[INFO] Loaded best model from epoch {checkpoint['epoch']} "
-            f"(Val PSNR: {checkpoint['val_psnr']:.2f} dB)"
-        )
+    best_ckpt = checkpoint_path / "best_pinn_model.pth"
+    if save_best and best_ckpt.exists():
+        ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
 
-    # ============================================================
-    # Post-Training Visualizations
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("[INFO] Generating post-training visualizations...")
-    print("=" * 60)
-
-    # Build training config for display
-    train_config = {
-        "model": model_type,
-        "epochs": num_epochs,
-        "dropout": dropout_rate,
-        "augment": augment,
-        "mode": data_mode,
-        "best_psnr": best_val_psnr,
-    }
-
-    results_image_name = "fig_unsupervised_results.png" if is_unsupervised else "fig_results.png"
-    curves_image_name = (
-        "fig_unsupervised_training_curves.png"
-        if is_unsupervised
-        else "fig_training_curves.png"
-    )
-    acoustic_image_name = (
-        "fig_unsupervised_acoustic_validation.png"
-        if is_unsupervised
-        else "fig_acoustic_validation.png"
-    )
-
-    # Results visualization
     plot_results(
         model,
         val_loader,
         device,
-        _image_path(results_image_name),
-        train_config=train_config,
-        unsupervised=is_unsupervised,
+        run_image("fig_pinn_results.png"),
+        train_config={
+            "model": "DeepCAE_PINN",
+            "epochs": num_epochs,
+            "dropout": dropout_rate,
+            "augment": augment,
+            "mode": data_mode,
+            "best_psnr": best_val_psnr,
+        },
     )
-
-    # Training curves
-    plot_training_curves(history, _image_path(curves_image_name))
-
-    # Acoustic feature validation (声学特征验证)
-    print("\n" + "=" * 60)
-    print("[INFO] Running acoustic feature validation...")
-    print("=" * 60)
+    plot_pinn_training_curves(history, run_image("fig_pinn_training_curves.png"))
     run_acoustic_validation(
         model,
         val_loader,
         device,
-        save_path=_image_path(acoustic_image_name),
+        save_path=run_image("fig_pinn_acoustic_validation.png"),
     )
-
-    # ============================================================
-    # Summary
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("[INFO] Training Complete!")
-    print("=" * 60)
-    print(f"  → Best validation PSNR: {best_val_psnr:.2f} dB")
-    print(f"  → Final training PSNR: {history['train_psnr'][-1]:.2f} dB")
-    print("  → Figures saved:")
-    print(f"      - {_image_path('fig_pre_train_samples.png')}")
-    print(f"      - {_image_path(results_image_name)}")
-    print(f"      - {_image_path(curves_image_name)}")
-    print(f"      - {_image_path(acoustic_image_name)}")
-    print(f"  → Model checkpoint: {checkpoint_path / best_checkpoint_name}")
-
     return model, history
 
 
-def _get_train_default(param_name: str):
-    """Read default values directly from train() signature (single source of truth)."""
-    param = inspect.signature(train).parameters.get(param_name)
-    if param is None or param.default is inspect._empty:
-        raise ValueError(f"Parameter '{param_name}' has no default in train()")
-    return param.default
+def train_deepsets_pinn(
+    num_epochs: int = 50,
+    batch_size: int = 32,
+    learning_rate: float = 0.001,
+    save_best: bool = True,
+    checkpoint_dir: str = str(CHECKPOINTS_DIR),
+    seed: int = 42,
+    data_path: str = "data",
+    early_stopping_patience: int = 50,
+    min_epochs: int = 30,
+    dropout_rate: float = 0.1,
+    augment: bool = True,
+    grid_cols: int = 41,
+    grid_rows: int = 41,
+    patch_size: int = 5,
+    stride: int = 1,
+    physics_weight: float = 0.001,
+    wave_speed: float = 5900.0,
+    center_frequency: float = 250e3,
+    dx: float = GRID_SPACING,
+    dy: float = GRID_SPACING,
+    model_type: str = "deepsets",
+    base_channels: int = 16,
+    coord_dim: int = 64,
+    signal_embed_dim: int = 128,
+    coord_embed_dim: int = 64,
+    point_dim: int = 128,
+) -> Tuple[nn.Module, Dict[str, list]]:
+    del model_type, coord_dim
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    device = _select_device()
+
+    print(f"\n[INFO] Loading experimental data from {data_path}...")
+    train_loader, val_loader = create_deepsets_dataloaders(
+        data_root=data_path,
+        grid_cols=grid_cols,
+        grid_rows=grid_rows,
+        patch_size=patch_size,
+        stride=stride,
+        batch_size=batch_size,
+        dx=dx,
+        dy=dy,
+        augment=augment,
+    )
+
+    model = DeepSetsPINN(
+        signal_embed_dim=signal_embed_dim,
+        coord_embed_dim=coord_embed_dim,
+        point_dim=point_dim,
+        base_channels=base_channels,
+        dropout_rate=dropout_rate,
+        wave_speed=wave_speed,
+        center_frequency=center_frequency,
+        dx=dx,
+        dy=dy,
+        patch_size=patch_size,
+    ).to(device)
+
+    print(f"\n[INFO] Model: DeepSetsPINN")
+    print(f"[INFO] Total parameters: {count_parameters(model):,}")
+
+    criterion = DeepSetsPINNLoss(physics_weight=physics_weight)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=num_epochs, eta_min=1e-6
+    )
+
+    ckpt_path = Path(checkpoint_dir)
+    ckpt_path.mkdir(parents=True, exist_ok=True)
+    image_dir = _resolve_image_dir(checkpoint_dir)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    run_image = lambda f: str(image_dir / f)
+
+    plot_pre_training_samples_deepsets(
+        train_loader, run_image("fig_deepsets_pinn_pre_train_samples.png")
+    )
+
+    history: Dict[str, list] = {
+        "train_total_loss": [],
+        "train_data_loss": [],
+        "train_physics_loss": [],
+        "train_psnr": [],
+        "val_total_loss": [],
+        "val_data_loss": [],
+        "val_physics_loss": [],
+        "val_psnr": [],
+    }
+
+    best_val_psnr = -float("inf")
+    early_counter = 0
+    pbar = tqdm(range(1, num_epochs + 1), desc="DeepSets PINN Training", unit="epoch")
+    for epoch in pbar:
+        tr_total, tr_data, tr_phys, tr_psnr = train_epoch_deepsets(
+            model, train_loader, criterion, optimizer, device, grid_cols, grid_rows
+        )
+        va_total, va_data, va_phys, va_psnr = validate_deepsets(
+            model, val_loader, criterion, device, grid_cols, grid_rows
+        )
+        scheduler.step(epoch)
+
+        history["train_total_loss"].append(tr_total)
+        history["train_data_loss"].append(tr_data)
+        history["train_physics_loss"].append(tr_phys)
+        history["train_psnr"].append(tr_psnr)
+        history["val_total_loss"].append(va_total)
+        history["val_data_loss"].append(va_data)
+        history["val_physics_loss"].append(va_phys)
+        history["val_psnr"].append(va_psnr)
+        pbar.set_postfix(
+            {
+                "total": f"{tr_total:.6f}",
+                "phys": f"{tr_phys:.2e}",
+                "val_psnr": f"{va_psnr:.2f}dB",
+            }
+        )
+
+        if save_best and va_psnr > best_val_psnr:
+            best_val_psnr = va_psnr
+            early_counter = 0
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "val_psnr": va_psnr,
+                    "val_total_loss": va_total,
+                    "val_data_loss": va_data,
+                    "val_physics_loss": va_phys,
+                    "physics_weight": physics_weight,
+                    "wave_speed": wave_speed,
+                    "grid_cols": grid_cols,
+                    "grid_rows": grid_rows,
+                    "patch_size": patch_size,
+                    "dx": dx,
+                    "dy": dy,
+                    "model_type": "deepsets",
+                    "base_channels": base_channels,
+                    "coord_dim": coord_embed_dim,
+                },
+                ckpt_path / "best_deepsets_pinn.pth",
+            )
+        else:
+            early_counter += 1
+            if epoch >= min_epochs and early_counter >= early_stopping_patience:
+                break
+
+    best_path = ckpt_path / "best_deepsets_pinn.pth"
+    if save_best and best_path.exists():
+        ckpt = torch.load(best_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+
+    plot_pinn_training_curves(
+        history, run_image("fig_deepsets_pinn_training_curves.png")
+    )
+    plot_deepsets_sample_results(
+        model, val_loader, device, run_image("fig_deepsets_pinn_results.png")
+    )
+    run_deepsets_acoustic_validation(
+        model,
+        val_loader,
+        device,
+        run_image("fig_deepsets_pinn_acoustic_validation.png"),
+    )
+    return model, history
+
+
+def train_from_config(config: Dict[str, object]) -> Tuple[nn.Module, Dict[str, list]]:
+    pipeline = str(config.get("pipeline", "pinn")).strip().lower()
+    if pipeline == "pinn":
+        return train_pinn(
+            num_epochs=int(config.get("epochs", 50)),
+            batch_size=int(config.get("batch_size", 32)),
+            learning_rate=float(config.get("lr", 1e-3)),
+            num_train=int(config.get("num_train", 5000)),
+            num_val=int(config.get("num_val", 1000)),
+            save_best=bool(config.get("save_best", True)),
+            checkpoint_dir=str(config.get("checkpoint_dir", str(CHECKPOINTS_DIR))),
+            seed=int(config.get("seed", 42)),
+            data_mode=str(config.get("mode", config.get("data_mode", "synthetic"))),
+            data_path=str(config.get("data_path", "data")),
+            early_stopping_patience=int(config.get("patience", 50)),
+            min_epochs=int(config.get("min_epochs", 30)),
+            dropout_rate=float(config.get("dropout", 0.1)),
+            augment=bool(config.get("augment", False)),
+            physics_weight=float(config.get("physics_weight", 1e-3)),
+            wave_speed=float(config.get("wave_speed", 5900.0)),
+            center_frequency=float(config.get("center_frequency", 250e3)),
+            damping_ratio=float(config.get("damping_ratio", 0.05)),
+        )
+
+    if pipeline == "deepsets":
+        return train_deepsets_pinn(
+            num_epochs=int(config.get("epochs", 50)),
+            batch_size=int(config.get("batch_size", 32)),
+            learning_rate=float(config.get("lr", 1e-3)),
+            save_best=bool(config.get("save_best", True)),
+            checkpoint_dir=str(config.get("checkpoint_dir", str(CHECKPOINTS_DIR))),
+            seed=int(config.get("seed", 42)),
+            data_path=str(config.get("data_path", "data")),
+            early_stopping_patience=int(config.get("patience", 50)),
+            min_epochs=int(config.get("min_epochs", 30)),
+            dropout_rate=float(config.get("dropout", 0.1)),
+            augment=bool(config.get("augment", True)),
+            grid_cols=int(config.get("grid_cols", config.get("target_cols", 41))),
+            grid_rows=int(config.get("grid_rows", config.get("target_rows", 41))),
+            patch_size=int(config.get("patch_size", 5)),
+            stride=int(config.get("stride", 1)),
+            physics_weight=float(config.get("physics_weight", 1e-4)),
+            wave_speed=float(config.get("wave_speed", 5900.0)),
+            center_frequency=float(config.get("center_frequency", 250e3)),
+            dx=float(config.get("dx", GRID_SPACING)),
+            dy=float(config.get("dy", GRID_SPACING)),
+            model_type="deepsets",
+            base_channels=int(config.get("base_channels", 16)),
+            coord_dim=int(config.get("coord_dim", 64)),
+            signal_embed_dim=int(config.get("signal_embed_dim", 128)),
+            coord_embed_dim=int(
+                config.get("coord_embed_dim", config.get("coord_dim", 64))
+            ),
+            point_dim=int(config.get("point_dim", 128)),
+        )
+
+    raise ValueError(
+        f"Unsupported pipeline: {pipeline}. Expected 'pinn' or 'deepsets'."
+    )
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Unified trainer for PINN and DeepSets PINN",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--pipeline", choices=["pinn", "deepsets"], default="pinn")
+    parser.add_argument(
+        "--mode", type=str, default="synthetic", choices=["synthetic", "file"]
+    )
+    parser.add_argument("--data_path", type=str, default="data")
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--patience", type=int, default=50)
+    parser.add_argument("--min_epochs", type=int, default=30)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--augment", action="store_true")
+    parser.add_argument("--num_train", type=int, default=5000)
+    parser.add_argument("--num_val", type=int, default=1000)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--physics_weight", type=float, default=None)
+    parser.add_argument("--wave_speed", type=float, default=5900.0)
+    parser.add_argument("--center_frequency", type=float, default=250e3)
+    parser.add_argument("--damping_ratio", type=float, default=0.05)
+    parser.add_argument("--grid_cols", type=int, default=41)
+    parser.add_argument("--grid_rows", type=int, default=41)
+    parser.add_argument("--patch_size", type=int, default=5)
+    parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--base_channels", type=int, default=16)
+    parser.add_argument("--coord_dim", type=int, default=64)
+    parser.add_argument("--signal_embed_dim", type=int, default=128)
+    parser.add_argument("--coord_embed_dim", type=int, default=64)
+    parser.add_argument("--point_dim", type=int, default=128)
+    parser.add_argument("--checkpoint_dir", type=str, default=str(CHECKPOINTS_DIR))
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    physics_weight = args.physics_weight
+    if physics_weight is None:
+        physics_weight = 1e-3 if args.pipeline == "pinn" else 1e-4
+
+    config: Dict[str, object] = {
+        "pipeline": args.pipeline,
+        "mode": args.mode,
+        "data_mode": args.mode,
+        "data_path": args.data_path,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "patience": args.patience,
+        "min_epochs": args.min_epochs,
+        "dropout": args.dropout,
+        "augment": args.augment,
+        "num_train": args.num_train,
+        "num_val": args.num_val,
+        "seed": args.seed,
+        "physics_weight": physics_weight,
+        "wave_speed": args.wave_speed,
+        "center_frequency": args.center_frequency,
+        "damping_ratio": args.damping_ratio,
+        "grid_cols": args.grid_cols,
+        "grid_rows": args.grid_rows,
+        "patch_size": args.patch_size,
+        "stride": args.stride,
+        "base_channels": args.base_channels,
+        "coord_dim": args.coord_dim,
+        "signal_embed_dim": args.signal_embed_dim,
+        "coord_embed_dim": args.coord_embed_dim,
+        "point_dim": args.point_dim,
+        "checkpoint_dir": args.checkpoint_dir,
+        "save_best": True,
+    }
+    train_from_config(config)
 
 
 if __name__ == "__main__":
-    # ============================================================
-    # Run Training with Command Line Arguments
-    #
-    # Usage with synthetic data (default):
-    #   uv run python train.py
-    #
-    # Usage with experimental data (from transformer.py output):
-    #   uv run python train.py --mode file --data_path data
-    #
-    # With deep model and anti-overfitting:
-    #   uv run python train.py --mode file --data_path data --model deep --epochs 200 --lr 0.0005 --patience 25
-    #
-    # With unsupervised autoencoder (input reconstruction):
-    #   uv run python train.py --mode file --data_path data --model unsupervised_deep --epochs 100
-    # ============================================================
-
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Train Ultrasonic Signal Denoising CAE",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    # Data source
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default=_get_train_default("data_mode"),
-        choices=["synthetic", "file"],
-        help="Data mode: synthetic or file",
-    )
-    parser.add_argument(
-        "--data_path",
-        type=str,
-        default=_get_train_default("data_path"),
-        help="Path to data directory (for file mode)",
-    )
-
-    # Training parameters
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=_get_train_default("num_epochs"),
-        help="Number of training epochs",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=_get_train_default("batch_size"),
-        help="Batch size",
-    )
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=_get_train_default("learning_rate"),
-        help="Learning rate",
-    )
-    parser.add_argument(
-        "--patience",
-        type=int,
-        default=_get_train_default("early_stopping_patience"),
-        help="Early stopping patience (epochs without improvement)",
-    )
-    parser.add_argument(
-        "--min_epochs",
-        type=int,
-        default=_get_train_default("min_epochs"),
-        help="Minimum epochs before early stopping can trigger",
-    )
-    parser.add_argument(
-        "--dropout",
-        type=float,
-        default=_get_train_default("dropout_rate"),
-        help="Dropout rate for regularization (0.1 recommended, 0.4 was too aggressive)",
-    )
-
-    # Data augmentation
-    parser.add_argument(
-        "--augment",
-        action="store_true",
-        help="Enable data augmentation (time flip, amplitude scaling, noise injection, time shift)",
-    )
-
-    # Synthetic mode parameters
-    parser.add_argument(
-        "--num_train",
-        type=int,
-        default=_get_train_default("num_train"),
-        help="Number of synthetic training samples",
-    )
-    parser.add_argument(
-        "--num_val",
-        type=int,
-        default=_get_train_default("num_val"),
-        help="Number of synthetic validation samples",
-    )
-
-    # Model options
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=_get_train_default("model_type"),
-        choices=["lightweight", "deeper", "deep", "unsupervised_deep"],
-        help="Model type: lightweight (3层), deeper (4层), deep (5层), unsupervised_deep (无监督5层)",
-    )
-    parser.add_argument(
-        "--deeper", action="store_true", help="(Deprecated) Use --model deeper instead"
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=_get_train_default("seed"),
-        help="Random seed (default: random each run; set integer for reproducibility)",
-    )
-
-    args = parser.parse_args()
-
-    # Handle legacy --deeper flag
-    model_type = args.model
-    if args.deeper and model_type == "lightweight":
-        model_type = "deeper"
-
-    model, history = train(
-        num_epochs=args.epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.lr,
-        num_train=args.num_train,
-        num_val=args.num_val,
-        save_best=True,
-        model_type=model_type,
-        seed=args.seed,
-        data_mode=args.mode,
-        data_path=args.data_path,
-        early_stopping_patience=args.patience,
-        min_epochs=args.min_epochs,
-        dropout_rate=args.dropout,
-        augment=args.augment,
-    )
+    main()

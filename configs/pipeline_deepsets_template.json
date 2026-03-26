@@ -35,7 +35,7 @@
 
   "patch_size": 5,
   "stride": 1,
-  "model_type": "spatial_cae",
+  "model_type": "deepsets",
   "base_channels": 16,
   "coord_dim": 64,
 
