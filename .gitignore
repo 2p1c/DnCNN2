@@ -146,13 +146,3 @@ wandb/
 configs/pipeline_deepsets.json
 configs/pipeline_pinn.json
 results/
-
-# Allowlist: explicitly track only these run result folders
-!results/
-results/*
-!results/20260325_214120/
-!results/20260325_214120/**
-!results/20260325_214035/
-!results/20260325_214035/**
-!results/20260326_025219/
-!results/20260326_025219/**
