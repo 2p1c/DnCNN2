@@ -66,8 +66,7 @@ from scripts.transformer import (
 )
 from scripts.analysis.inference import run_inference as run_pinn_inference
 from scripts.analysis.inference_deepsets import run_inference as run_deepsets_inference
-from scripts.train.train_deepsets_pinn import train_deepsets_pinn
-from scripts.train.train_pinn import train_pinn
+from scripts.train.train import train_from_config
 
 
 def _write_experiment_record(
@@ -257,8 +256,8 @@ def main() -> None:
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument(
         "--model_type",
-        choices=["spatial_cae", "spatial_context_cae", "deepsets", "set_invariant_pinn"],
-        default="spatial_cae",
+        choices=["deepsets"],
+        default="deepsets",
         help="DeepSets pipeline model variant",
     )
     parser.add_argument("--base_channels", type=int, default=16)
@@ -377,51 +376,39 @@ def main() -> None:
     else:
         print("\n[STAGE 1/3] Data transform skipped")
 
+    ##############################
+
     if not args.skip_train:
         print("\n[STAGE 2/3] Model training")
-        if args.pipeline == "pinn":
-            train_pinn(
-                num_epochs=args.epochs,
-                batch_size=args.batch_size,
-                learning_rate=args.lr,
-                save_best=True,
-                checkpoint_dir=str(checkpoints_dir),
-                seed=args.seed,
-                data_mode="file",
-                data_path=args.data_dir,
-                early_stopping_patience=args.patience,
-                min_epochs=args.min_epochs,
-                dropout_rate=args.dropout,
-                augment=False,
-                physics_weight=physics_weight,
-                wave_speed=args.wave_speed,
-                center_frequency=args.center_frequency,
-                damping_ratio=args.damping_ratio,
-            )
-        else:
-            train_deepsets_pinn(
-                num_epochs=args.epochs,
-                batch_size=args.batch_size,
-                learning_rate=args.lr,
-                save_best=True,
-                checkpoint_dir=str(checkpoints_dir),
-                seed=args.seed,
-                data_path=args.data_dir,
-                early_stopping_patience=args.patience,
-                min_epochs=args.min_epochs,
-                dropout_rate=args.dropout,
-                augment=True,
-                grid_cols=args.target_cols,
-                grid_rows=args.target_rows,
-                patch_size=args.patch_size,
-                stride=args.stride,
-                physics_weight=physics_weight,
-                wave_speed=args.wave_speed,
-                center_frequency=args.center_frequency,
-                model_type=args.model_type,
-                base_channels=args.base_channels,
-                coord_dim=args.coord_dim,
-            )
+        train_from_config(
+            {
+                "pipeline": args.pipeline,
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "save_best": True,
+                "checkpoint_dir": str(checkpoints_dir),
+                "seed": args.seed,
+                "mode": "file",
+                "data_mode": "file",
+                "data_path": args.data_dir,
+                "patience": args.patience,
+                "min_epochs": args.min_epochs,
+                "dropout": args.dropout,
+                "augment": False if args.pipeline == "pinn" else True,
+                "physics_weight": physics_weight,
+                "wave_speed": args.wave_speed,
+                "center_frequency": args.center_frequency,
+                "damping_ratio": args.damping_ratio,
+                "grid_cols": args.target_cols,
+                "grid_rows": args.target_rows,
+                "patch_size": args.patch_size,
+                "stride": args.stride,
+                "base_channels": args.base_channels,
+                "coord_dim": args.coord_dim,
+                "model_type": args.model_type,
+            }
+        )
     else:
         print("\n[STAGE 2/3] Model training skipped")
 

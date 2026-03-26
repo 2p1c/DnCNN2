@@ -25,10 +25,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple
 
-from model.model import (
-    SetInvariantWavePINN,
-    SpatialContextCAE,
-)
+from model.model import DeepSetsPINN
 from data import GRID_SPACING
 from scripts.transformer import (
     load_mat_file,
@@ -82,26 +79,20 @@ def load_model(
     dx = ckpt.get("dx", GRID_SPACING)
     dy = ckpt.get("dy", GRID_SPACING)
     wave_speed = ckpt.get("wave_speed", 5900.0)
-    model_type = str(ckpt.get("model_type", "deepsets")).strip().lower()
-
-    if model_type in {"spatial_cae", "spatial_context_cae"}:
-        base_channels = ckpt.get("base_channels", 32)
-        coord_dim = ckpt.get("coord_dim", 64)
-        model = SpatialContextCAE(
-            base_channels=base_channels,
-            coord_dim=coord_dim,
-            dropout_rate=0.0,
-            wave_speed=wave_speed,
-            dx=dx,
-            dy=dy,
-        )
-    else:
-        model = SetInvariantWavePINN(
-            dropout_rate=0.0,  # No dropout at inference
-            wave_speed=wave_speed,
-            dx=dx,
-            dy=dy,
-        )
+    base_channels = ckpt.get("base_channels", 16)
+    coord_dim = ckpt.get("coord_dim", 64)
+    model = DeepSetsPINN(
+        signal_embed_dim=ckpt.get("signal_embed_dim", 128),
+        coord_embed_dim=coord_dim,
+        point_dim=ckpt.get("point_dim", 128),
+        base_channels=base_channels,
+        dropout_rate=0.0,
+        wave_speed=wave_speed,
+        center_frequency=ckpt.get("center_frequency", 250e3),
+        dx=dx,
+        dy=dy,
+        patch_size=ckpt.get("patch_size", 5),
+    )
 
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device)
@@ -399,7 +390,9 @@ def run_inference(
     if validation_save_path:
         validation_fig = validation_save_path
     else:
-        validation_fig = str(image_dir / f"acoustic_validation_deepsets_{timestamp}.png")
+        validation_fig = str(
+            image_dir / f"acoustic_validation_deepsets_{timestamp}.png"
+        )
     run_inference_validation(
         input_signals=normalised,
         denoised_signals=denoised_norm,

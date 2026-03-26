@@ -1,194 +1,275 @@
-# Ultrasonic Signal Denoising (CAE / PINN / DeepSets-PINN)
+# Ultrasonic Signal Denoising (PINN / DeepSets-PINN)
 
-Ultrasonic 1D signal denoising project for NDT workflows, with three training pipelines:
+本项目用于超声 1D 信号去噪（NDT 场景），当前主流程已统一到：
 
-- `CAE` baseline
-- `PINN` (physics-informed loss)
-- `DeepSets + PINN` (patch/set-based spatial modeling)
+- 训练入口：`scripts/train/train.py`
+- 一体化流程入口：`scripts/run_unified_pipeline.py`
+- 模型定义入口：`model/model.py`
 
-The project supports synthetic data generation, file-based training, acoustic feature validation, and `.mat` inference export.
+当前仅保留并使用 3 个核心模型：
+
+- `DeepCAE`
+- `DeepCAE_PINN`（继承 `DeepCAE`）
+- `DeepSetsPINN`
+
+历史脚本和冗余模型（如 `train_pinn.py`、`train_deepsets_pinn.py`、`SpatialAuxiliaryCAE`、`model_deepsets.py`）已移除。
+
+---
 
 ## Environment
 
 ```bash
-# Install dependencies
 uv sync
 ```
 
+---
+
 ## Standard Output Directories
 
-All scripts now follow this unified convention by default:
+- Figures: `results/<run_timestamp>/images/`
+- Checkpoints: `results/<run_timestamp>/checkpoints/`
+- Inference `.mat` outputs: `results/<run_timestamp>/`
 
-- Figures: `results/images/`
-- Checkpoints: `results/checkpoints/`
-- Inference `.mat` outputs: `results/`
+其中 `<run_timestamp>` 由 `scripts/run_unified_pipeline.py` 自动创建。
 
-Directories are auto-created when needed.
+---
 
-## Quick Start
+## 1) 数据准备（transform）
 
-```bash
-# Baseline CAE training
-uv run python scripts/train/train.py
+统一使用 `scripts/transformer.py`，将实验 `.mat` 转换为训练目录结构（`train/` + `val/`）。
 
-# PINN training
-uv run python scripts/train/train_pinn.py
-
-# DeepSets + PINN training
-uv run python scripts/train/train_deepsets_pinn.py --data_path data
-```
-
-## Training Commands
-
-### 1. Baseline CAE
+### 基本用法
 
 ```bash
-# Synthetic data (default)
-uv run python scripts/train/train.py
-
-# File mode
-uv run python scripts/train/train.py --mode file --data_path data
-
-# Deep model + longer training
-uv run python scripts/train/train.py --model deep --epochs 200 --lr 5e-4
+uv run python scripts/transformer.py \
+  --noisy data/noisy.mat \
+  --clean data/clean.mat \
+  --output data
 ```
 
-Default checkpoint:
-- `results/checkpoints/best_model.pth`
+### 常用参数
 
-Typical figures:
-- `results/images/fig_pre_train_samples.png`
-- `results/images/fig_results.png`
-- `results/images/fig_training_curves.png`
-- `results/images/fig_acoustic_validation.png`
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--noisy` | 必填 | 噪声 `.mat` 文件 |
+| `--clean` | 必填 | 干净 `.mat` 文件 |
+| `--output` | `data` | 输出目录 |
+| `--noisy_cols` / `--noisy_rows` | `21` / `21` | 输入网格尺寸 |
+| `--clean_cols` / `--clean_rows` | `41` / `41` | 目标网格尺寸 |
+| `--augment_factor` | `5` | 数据增强倍数 |
+| `--train_ratio` | `0.8` | 训练集比例 |
+| `--interp_method` | `cubic` | 空间插值（`linear` / `cubic`） |
+| `--signal_length` | `1000` | 信号长度（超出截断） |
+| `--seed` | `42` | 随机种子 |
 
-### 2. PINN (CAE + physics)
+---
+
+## 2) 统一训练入口（scripts/train/train.py）
+
+训练通过 `--pipeline` 选择分支：
+
+- `pinn`：`DeepCAE_PINN` 路径
+- `deepsets`：`DeepSetsPINN` 路径
+
+### 2.1 PINN 训练
 
 ```bash
-uv run python scripts/train/train_pinn.py
-uv run python scripts/train/train_pinn.py --mode file --data_path data --physics_weight 0.001
+# 合成数据快速测试
+uv run python scripts/train/train.py --pipeline pinn --epochs 2
+
+# 文件模式训练
+uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data --epochs 100
+
+# 调节物理约束
+uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data --physics_weight 0.001
 ```
 
-Default checkpoint:
-- `results/checkpoints/best_pinn_model.pth`
+常用参数（PINN）：
 
-Typical figures:
-- `results/images/fig_pinn_pre_train_samples.png`
-- `results/images/fig_pinn_results.png`
-- `results/images/fig_pinn_training_curves.png`
-- `results/images/fig_pinn_acoustic_validation.png`
+| 参数 | 默认值 |
+|---|---|
+| `--mode` | `synthetic` |
+| `--data_path` | `data` |
+| `--epochs` | `50` |
+| `--batch_size` | `32` |
+| `--lr` | `0.001` |
+| `--dropout` | `0.1` |
+| `--patience` / `--min_epochs` | `50` / `30` |
+| `--physics_weight` | `1e-3`（默认逻辑） |
+| `--wave_speed` | `5900.0` |
+| `--center_frequency` | `250000.0` |
+| `--damping_ratio` | `0.05` |
 
-### 3. DeepSets + PINN
+典型输出：
+
+- `fig_pinn_pre_train_samples.png`
+- `fig_pinn_results.png`
+- `fig_pinn_training_curves.png`
+- `fig_pinn_acoustic_validation.png`
+- `best_pinn_model.pth`
+
+### 2.2 DeepSets-PINN 训练
 
 ```bash
-uv run python scripts/train/train_deepsets_pinn.py --data_path data
-uv run python scripts/train/train_deepsets_pinn.py --epochs 100 --patch_size 7 --physics_weight 1e-4
+# 最小烟测
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --epochs 2 --batch_size 8
+
+# 基础训练
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --epochs 100 --patch_size 5
+
+# 调节物理损失权重
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --physics_weight 1e-4
 ```
 
-模型命名新旧对照（兼容）：
+常用参数（DeepSets）：
 
-| 维度 | 旧名称 | 新名称（推荐） | 兼容状态 |
-|---|---|---|---|
-| Python 类名 | `DeepSetsPINN` | `SetInvariantWavePINN` | 两者都可导入/使用 |
-| Python 类名 | `SpatialAuxiliaryCAE` | `SpatialContextCAE` | 两者都可导入/使用 |
-| CLI `--model_type` | `deepsets` | `set_invariant_pinn` | 两者都可用 |
-| CLI `--model_type` | `spatial_cae` | `spatial_context_cae` | 两者都可用 |
+| 参数 | 默认值 |
+|---|---|
+| `--grid_cols` / `--grid_rows` | `41` / `41` |
+| `--patch_size` / `--stride` | `5` / `1` |
+| `--base_channels` | `16` |
+| `--coord_dim` | `64` |
+| `--signal_embed_dim` | `128` |
+| `--coord_embed_dim` | `64` |
+| `--point_dim` | `128` |
+| `--physics_weight` | `1e-4`（默认逻辑） |
+| `--wave_speed` | `5900.0` |
+| `--center_frequency` | `250000.0` |
 
-推荐写法示例：
+典型输出：
+
+- `fig_deepsets_pinn_pre_train_samples.png`
+- `fig_deepsets_pinn_training_curves.png`
+- `fig_deepsets_pinn_results.png`
+- `fig_deepsets_pinn_acoustic_validation.png`
+- `best_deepsets_pinn.pth`
+
+---
+
+## 3) 一体化流程（推荐）
+
+`scripts/run_unified_pipeline.py` 会串联：
+
+1. transform
+2. train
+3. inference
+
+并支持 JSON 配置（推荐）。
+
+### 3.1 PINN 全流程
 
 ```bash
-# 推荐：新命名（语义更清晰）
-uv run python scripts/train/train_deepsets_pinn.py --model_type spatial_context_cae --data_path data
-uv run python scripts/train/train_deepsets_pinn.py --model_type set_invariant_pinn --data_path data
-
-# 兼容：旧命名（仍可用）
-uv run python scripts/train/train_deepsets_pinn.py --model_type spatial_cae --data_path data
-uv run python scripts/train/train_deepsets_pinn.py --model_type deepsets --data_path data
+uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_template.json
 ```
 
-Default checkpoint:
-- `results/checkpoints/best_deepsets_pinn.pth`
+### 3.2 DeepSets 全流程
 
-Typical figures:
-- `results/images/fig_deepsets_pinn_training_curves.png`
-- `results/images/fig_deepsets_pinn_results.png`
+```bash
+uv run python scripts/run_unified_pipeline.py --config configs/pipeline_deepsets_template.json
+```
 
-## Inference
+### 3.3 跳过 transform/train（复用已有数据和权重）
 
-### CAE / PINN Inference
+```bash
+uv run python scripts/run_unified_pipeline.py \
+  --config configs/pipeline_pinn_template.json \
+  --skip_transform \
+  --skip_train \
+  --inference_input data/noisy.mat \
+  --checkpoint results/checkpoints/best_pinn_model.pth
+```
+
+DeepSets 对应替换为 `pipeline_deepsets_template.json` 与 `best_deepsets_pinn.pth`。
+
+---
+
+## 4) 独立推理脚本
+
+### 4.1 PINN/CAE 推理
 
 ```bash
 uv run python scripts/analysis/inference.py \
-	--input noisy.mat \
-	--output results/ \
-	--checkpoint results/checkpoints/best_model.pth
+  --input data/noisy.mat \
+  --output results/ \
+  --checkpoint results/checkpoints/best_pinn_model.pth
 ```
 
-Outputs:
-- `results/denoised_<timestamp>_full.mat`
-- `results/denoised_<timestamp>_original.mat` (if reverse interpolation enabled)
-- `results/images/acoustic_validation_<timestamp>.png`
-
-### DeepSets Inference
+### 4.2 DeepSets 推理
 
 ```bash
 uv run python scripts/analysis/inference_deepsets.py \
-	--input noisy.mat \
-	--output results/ \
-	--checkpoint results/checkpoints/best_deepsets_pinn.pth
+  --input data/noisy.mat \
+  --output results/ \
+  --checkpoint results/checkpoints/best_deepsets_pinn.pth
 ```
 
-Outputs:
-- `results/deepsets_denoised_<timestamp>.mat`
-- `results/deepsets_denoised_<timestamp>_original.mat` (if applicable)
+推理输出通常包括：
 
-## Signal Preview Utilities
+- PINN：`denoised_<ts>_full.mat` / `denoised_<ts>_original.mat`
+- DeepSets：`deepsets_denoised_<ts>.mat` / `deepsets_denoised_<ts>_original.mat`
+- 声学验证图：`acoustic_validation*.png`
 
-```bash
-# Basic preview
-uv run python scripts/analysis/preview_signals.py
+---
 
-# With detailed plot + noise type comparison
-uv run python scripts/analysis/preview_signals.py --detailed --compare_noise --no_show
-```
+## 5) 调参建议
 
-Preview figures are saved under `results/images/` by default.
+### PINN
 
-## Core Signal Settings
+| 现象 | 建议 |
+|---|---|
+| 物理约束过强（PSNR 低） | 降低 `physics_weight`（如 `1e-4`） |
+| 物理约束太弱（physics_loss 不降） | 适度提高 `physics_weight`（如 `1e-3 ~ 1e-2`） |
+| 输出过平滑 | 降低 `physics_weight`，或降低 `dropout` |
+| 训练不稳定 | 降低 `lr`（如 `5e-4`） |
+
+### DeepSets
+
+| 现象 | 建议 |
+|---|---|
+| 收敛慢/不稳定 | 降低 `lr`，增大 `patience` |
+| 去噪细节变差 | 保持 `patch_size=5` 起步，再小步调参 |
+| 结果偏向过强平滑 | 先降低 `physics_weight` |
+
+---
+
+## 6) 核心信号设置
 
 | Parameter | Value |
-|-----------|-------|
+|---|---|
 | Sampling Rate | 6.25 MHz |
 | Duration | 160 us |
 | Data Points | 1000 |
 | Center Frequency | 250 kHz |
 
-## Project Structure (Simplified)
+---
+
+## 7) Project Structure (Simplified)
 
 ```text
 DnCNN2/
 ├── model/
-|   ├── model.py
-|   └── model_deepsets.py
+│   ├── model.py
+│   └── model_networks_overview.md
 ├── data/
-|   ├── data_utils.py
-|   └── data_deepsets.py
+│   ├── data_utils.py
+│   └── data_deepsets.py
 ├── scripts/
-|   ├── transformer.py
-|   ├── train/
-|   |   ├── train.py
-|   |   ├── train_pinn.py
-|   |   └── train_deepsets_pinn.py
-|   └── analysis/
-|       ├── inference.py
-|       ├── inference_deepsets.py
-|       ├── acoustic_validation.py
-|       └── preview_signals.py
-├── results/
-|   ├── checkpoints/
-|   └── images/
+│   ├── transformer.py
+│   ├── run_unified_pipeline.py
+│   ├── train/
+│   │   └── train.py
+│   └── analysis/
+│       ├── inference.py
+│       ├── inference_deepsets.py
+│       ├── acoustic_validation.py
+│       └── preview_signals.py
+├── configs/
+│   ├── pipeline_pinn_template.json
+│   └── pipeline_deepsets_template.json
 └── README.md
 ```
+
+---
 
 ## License
 

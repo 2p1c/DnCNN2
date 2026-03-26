@@ -17,7 +17,7 @@ Usage:
     uv run python inference.py --input noisy.mat --output results/
 
     # With custom model checkpoint
-    uv run python inference.py --input noisy.mat --output results/ --checkpoint results/checkpoints/best_model.pth
+    uv run python inference.py --input noisy.mat --output results/ --checkpoint results/checkpoints/best_pinn_model.pth
 
     # Specify grid size (if different from default 21x21)
     uv run python inference.py --input noisy.mat --output results/ --cols 21 --rows 21
@@ -37,7 +37,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Optional
 
-from model.model import DeepCAE, DeeperCAE, LightweightCAE, UnsupervisedDeepCAE
+from model.model import DeepCAE
 from scripts.transformer import (
     load_mat_file,
     reshape_to_grid,
@@ -84,7 +84,7 @@ def load_model(
 
     Args:
         checkpoint_path: Path to model checkpoint (.pth file)
-        model_type: Model architecture ('lightweight', 'deeper', 'deep', 'unsupervised_deep')
+        model_type: Model architecture (kept for backward compatibility)
         device: Device to load model on
 
     Returns:
@@ -120,20 +120,7 @@ def load_model(
 
     base_channels = int(enc1_weight.shape[0])
 
-    has_unsupervised_bottleneck = any(
-        key.startswith("bottleneck_compress.") or key.startswith("bottleneck_expand.")
-        for key in state_dict.keys()
-    )
-    checkpoint_unsupervised_flag = bool(checkpoint.get("unsupervised", False)) if isinstance(checkpoint, dict) else False
-
     resolved_model_type = model_type
-    if has_unsupervised_bottleneck or checkpoint_unsupervised_flag:
-        resolved_model_type = "unsupervised_deep"
-        if model_type != "unsupervised_deep":
-            print(
-                "[WARNING] Checkpoint indicates unsupervised bottleneck architecture; "
-                "overriding --model to 'unsupervised_deep'."
-            )
 
     print(f"[INFO] Loading model from {checkpoint_path}")
     print(f"[INFO] Requested model type: {model_type}")
@@ -142,34 +129,7 @@ def load_model(
     print(f"[INFO] Device: {device}")
 
     # Initialize model based on resolved type and inferred channels
-    if resolved_model_type == "unsupervised_deep":
-        bottleneck_weight = state_dict.get("bottleneck_compress.0.weight")
-        if bottleneck_weight is None:
-            raise ValueError(
-                "Checkpoint indicates unsupervised model, but missing "
-                "'bottleneck_compress.0.weight'"
-            )
-        bottleneck_channels = int(bottleneck_weight.shape[0])
-        print(
-            "[INFO] Inferred bottleneck_channels from checkpoint: "
-            f"{bottleneck_channels}"
-        )
-        model = UnsupervisedDeepCAE(
-            base_channels=base_channels,
-            dropout_rate=0.0,
-            bottleneck_channels=bottleneck_channels,
-        )
-    elif resolved_model_type == "deep":
-        model = DeepCAE(base_channels=base_channels, dropout_rate=0.0)
-    elif resolved_model_type == "deeper":
-        model = DeeperCAE(base_channels=base_channels, dropout_rate=0.0)
-    elif resolved_model_type == "lightweight":
-        model = LightweightCAE(base_channels=base_channels, dropout_rate=0.0)
-    else:
-        raise ValueError(
-            "Unsupported model_type: "
-            f"{resolved_model_type}. Choose from lightweight/deeper/deep/unsupervised_deep"
-        )
+    model = DeepCAE(base_channels=base_channels, dropout_rate=0.0)
 
     model.load_state_dict(state_dict)
 
@@ -377,20 +337,16 @@ def denormalize_signals(denoised_normalized: np.ndarray, metadata: dict) -> np.n
         if amplitude_range > min_threshold:
             # Normal denormalization
             denoised[i] = (
-                (denoised_normalized[i].astype(np.float64) + 1.0) / 2.0
-                * amplitude_range
-                + min_val
-            )
+                denoised_normalized[i].astype(np.float64) + 1.0
+            ) / 2.0 * amplitude_range + min_val
         else:
             # Signal was nearly flat during normalization
             # For very small signals, preserve the denoised structure
             if amplitude_range > 0:
                 # Even tiny signals should be denormalized properly
                 denoised[i] = (
-                    (denoised_normalized[i].astype(np.float64) + 1.0) / 2.0
-                    * amplitude_range
-                    + min_val
-                )
+                    denoised_normalized[i].astype(np.float64) + 1.0
+                ) / 2.0 * amplitude_range + min_val
             else:
                 # Truly flat signal (constant value)
                 # Restore to the constant value (min_val == max_val)
@@ -486,7 +442,7 @@ def save_to_mat(
 def run_inference(
     input_path: str,
     output_path: str,
-    checkpoint_path: str = str(CHECKPOINTS_DIR / "best_model.pth"),
+    checkpoint_path: str = str(CHECKPOINTS_DIR / "best_pinn_model.pth"),
     model_type: str = "deep",
     grid_cols: int = 21,
     grid_rows: int = 21,
@@ -567,14 +523,7 @@ def run_inference(
     image_dir = output_dir / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
-    comparison_fig = str(
-        image_dir
-        / (
-            "fig_unsupervised_inferenced.png"
-            if model_type == "unsupervised_deep"
-            else "fig_inferenced.png"
-        )
-    )
+    comparison_fig = str(image_dir / ("fig_inferenced.png"))
     plot_inference_comparison(original_signals, denoised, comparison_fig)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -668,7 +617,7 @@ def main():
         "--checkpoint",
         "-c",
         type=str,
-        default=str(CHECKPOINTS_DIR / "best_model.pth"),
+        default=str(CHECKPOINTS_DIR / "best_pinn_model.pth"),
         help="Path to model checkpoint",
     )
     parser.add_argument(
@@ -676,7 +625,7 @@ def main():
         "-m",
         type=str,
         default="deep",
-        choices=["lightweight", "deeper", "deep", "unsupervised_deep"],
+        choices=["deep"],
         help="Model architecture",
     )
 

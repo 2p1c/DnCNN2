@@ -90,18 +90,9 @@ uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_tem
 |---|---|---|
 | `patch_size` | patch 边长 | `5`（常用） |
 | `stride` | patch 步长 | `1`（质量优先） |
-| `model_type` | 选择 DeepSets 分支模型 | 优先 `spatial_context_cae` |
+| `model_type` | DeepSets 分支模型开关 | 固定为 `deepsets` |
 | `base_channels` | 基础通道数 | `16` 起步 |
 | `coord_dim` | 坐标嵌入维度 | `64` |
-
-#### model_type 新旧名称对照
-
-| 旧值 | 新值（推荐） | 对应模型类 |
-|---|---|---|
-| `spatial_cae` | `spatial_context_cae` | `SpatialContextCAE`（旧名 `SpatialAuxiliaryCAE`） |
-| `deepsets` | `set_invariant_pinn` | `SetInvariantWavePINN`（旧名 `DeepSetsPINN`） |
-
-说明：新旧值都可用，推荐在新配置中使用新值，便于语义统一。
 
 ### H. 推理与验证
 
