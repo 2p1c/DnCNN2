@@ -5,11 +5,12 @@ description = "Ultrasonic signal denoising using Convolutional Autoencoder"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "torch>=2.4.0",      # 确保对 CUDA 12.x 的原生支持
-    "numpy>=1.24.0,<2.0.0", # 避免 NumPy 2.0 带来的兼容性风险
+    "torch>=2.0.0",  # 放宽限制
+    "numpy>=1.24.0,<2.0.0",
     "matplotlib>=3.7.0",
     "scipy>=1.10.0",
     "tqdm>=4.65.0",
+    "pyyaml",      
 ]
 
 [build-system]
