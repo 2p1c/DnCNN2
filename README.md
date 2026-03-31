@@ -1,5 +1,7 @@
 # Ultrasonic Signal Denoising (CAE / PINN / DeepSets-PINN)
 
+运行训练查看[配置文件说明](configs/README.md)
+
 Ultrasonic 1D signal denoising project for NDT workflows, with three training pipelines:
 
 - `CAE` baseline
