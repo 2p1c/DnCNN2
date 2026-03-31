@@ -90,7 +90,7 @@ uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_tem
 |---|---|---|
 | `patch_size` | patch 边长 | `5`（常用） |
 | `stride` | patch 步长 | `1`（质量优先） |
-| `model_type` | `spatial_cae` 或 `deepsets` | 优先 `spatial_cae` |
+| `model_type` | DeepSets 分支模型开关 | 固定为 `deepsets` |
 | `base_channels` | 基础通道数 | `16` 起步 |
 | `coord_dim` | 坐标嵌入维度 | `64` |
 
@@ -176,7 +176,7 @@ uv run python scripts/run_unified_pipeline.py --config configs/pipeline_deepsets
 - 跳过训练只做推理+验证：
 
 ```bash
-uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_template.json --skip_train true
+uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_template.json --skip_train
 ```
 
 注：布尔参数推荐在 JSON 中改（`true/false`）。命令行上 `--skip_train` 出现即为开启。

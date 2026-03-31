@@ -19,12 +19,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 import argparse
 import numpy as np
 import torch
+import torch.nn as nn
 from scipy import io as sio
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple
 
-from model.model_deepsets import DeepSetsPINN, SpatialAuxiliaryCAE
+from model.model import DeepSetsPINN
 from data import GRID_SPACING
 from scripts.transformer import (
     load_mat_file,
@@ -50,7 +51,7 @@ CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
 def load_model(
     checkpoint_path: str,
     device: torch.device = None,
-) -> Tuple[DeepSetsPINN, dict]:
+) -> Tuple[nn.Module, dict]:
     """
     Load trained DeepSets PINN from checkpoint.
 
@@ -78,26 +79,20 @@ def load_model(
     dx = ckpt.get("dx", GRID_SPACING)
     dy = ckpt.get("dy", GRID_SPACING)
     wave_speed = ckpt.get("wave_speed", 5900.0)
-    model_type = ckpt.get("model_type", "deepsets")  # backward compat
-
-    if model_type == "spatial_cae":
-        base_channels = ckpt.get("base_channels", 32)
-        coord_dim = ckpt.get("coord_dim", 64)
-        model = SpatialAuxiliaryCAE(
-            base_channels=base_channels,
-            coord_dim=coord_dim,
-            dropout_rate=0.0,
-            wave_speed=wave_speed,
-            dx=dx,
-            dy=dy,
-        )
-    else:
-        model = DeepSetsPINN(
-            dropout_rate=0.0,  # No dropout at inference
-            wave_speed=wave_speed,
-            dx=dx,
-            dy=dy,
-        )
+    base_channels = ckpt.get("base_channels", 16)
+    coord_dim = ckpt.get("coord_dim", 64)
+    model = DeepSetsPINN(
+        signal_embed_dim=ckpt.get("signal_embed_dim", 128),
+        coord_embed_dim=coord_dim,
+        point_dim=ckpt.get("point_dim", 128),
+        base_channels=base_channels,
+        dropout_rate=0.0,
+        wave_speed=wave_speed,
+        center_frequency=ckpt.get("center_frequency", 250e3),
+        dx=dx,
+        dy=dy,
+        patch_size=ckpt.get("patch_size", 5),
+    )
 
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device)
@@ -193,7 +188,7 @@ def preprocess_mat_data(
 
 
 def denoise_grid(
-    model: DeepSetsPINN,
+    model: nn.Module,
     normalised_signals: np.ndarray,
     grid_cols: int = 41,
     grid_rows: int = 41,
@@ -208,7 +203,7 @@ def denoise_grid(
     prediction.
 
     Args:
-        model: Trained DeepSetsPINN
+        model: Trained denoising model
         normalised_signals: (n_signals, T) normalised input
         grid_cols, grid_rows: Grid dimensions
         patch_size: Patch side length
@@ -395,7 +390,9 @@ def run_inference(
     if validation_save_path:
         validation_fig = validation_save_path
     else:
-        validation_fig = str(image_dir / f"acoustic_validation_deepsets_{timestamp}.png")
+        validation_fig = str(
+            image_dir / f"acoustic_validation_deepsets_{timestamp}.png"
+        )
     run_inference_validation(
         input_signals=normalised,
         denoised_signals=denoised_norm,

@@ -8,22 +8,21 @@
 
 非接触式激光超声检测（Laser Ultrasonic Testing, LUT）是一种先进的无损检测技术，利用激光产生和接收超声波信号来检测材料中的缺陷。然而，LUT信号通常受到环境噪声和系统噪声的干扰，导致信噪比（SNR）较低，影响检测的准确性和可靠性。
 
-激光超声依靠热膨胀效应产生超声波，但大量研究表明，实际实验中难以把控激光参数和环境因素，不同材料之间的热膨胀效应和烧蚀阈值。激光器的电压，聚集光斑大小，材料的热扩散特性，激励频率等等因素都会影响生成激光信号的质量和一致性。
+激光超声依靠热膨胀效应产生超声波，但实际实验中激光参数与环境因素难以完全稳定控制。激光电压、光斑尺寸、材料热扩散特性、激励频率等都会影响信号质量与一致性。
 
 ### 核心方法
 
-本项目采用深度学习方法对激光超声信号进行去噪处理，提供了三种训练 pipeline：
+本项目采用深度学习方法对激光超声信号进行去噪处理，当前主流程提供两种训练 pipeline：
 
 | Pipeline | 特点 | 适用场景 |
 |----------|------|----------|
-| **CAE** | 基础卷积自编码器 | 快速 baseline |
-| **PINN** | 引入物理约束（波动方程） | 需要保持声学物理特性 |
+| **PINN** | 基于 DeepCAE 主干 + 物理损失 | 需要保持时域物理一致性 |
 | **DeepSets+PINN** | Patch 级空间建模 + 物理约束 | 大面积扫描、复杂空间相关性 |
 
 ### 技术亮点
 
 - **Physics-Informed Neural Network (PINN)**：将一维声波方程物理约束嵌入损失函数，确保去噪后的信号符合物理规律
-- **Spatial-Auxiliary CAE**：利用空间邻域信息辅助特征提取
+- **DeepSets PINN**：利用 patch/set 空间结构建模邻域关系
 - **声学特征验证**：自动对比去噪前后的主频、频带能量、频谱相干性等声学指标
 - **统一推理管线**：支持训练与推理使用不同网格尺寸（灵活应对实际检测场景）
 
@@ -46,7 +45,7 @@ uv sync --group dev
 ```bash
 # 使用统一管线（transform → train → inference → validation）
 uv run python scripts/run_unified_pipeline.py \
-    --config configs/pipeline_pinn.json
+    --config configs/pipeline_pinn_template.json
 ```
 
 ### 分步运行
@@ -65,14 +64,11 @@ uv run python scripts/transformer.py \
 #### 2. 模型训练
 
 ```bash
-# CAE baseline
-uv run python scripts/train/train.py
-
 # PINN (推荐)
-uv run python scripts/train/train_pinn.py --mode file --data_path data
+uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data
 
 # DeepSets + PINN
-uv run python scripts/train/train_deepsets_pinn.py --data_path data
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data
 ```
 
 #### 3. 推理去噪
@@ -124,7 +120,6 @@ uv run python scripts/analysis/inference_deepsets.py \
 DnCNN2/
 ├── results/
 │   ├── checkpoints/     # 模型权重
-│   │   ├── best_model.pth
 │   │   ├── best_pinn_model.pth
 │   │   └── best_deepsets_pinn.pth
 │   ├── images/          # 可视化结果
@@ -145,10 +140,10 @@ DnCNN2/
 
 ```bash
 uv run python scripts/run_unified_pipeline.py \
-    --config configs/pipeline_pinn.json
+    --config configs/pipeline_pinn_template.json
 ```
 
-配置文件示例（`configs/pipeline_pinn.json`）：
+配置文件示例（`configs/pipeline_pinn_template.json`）：
 
 ```json
 {
@@ -263,9 +258,8 @@ uv run python scripts/run_unified_pipeline.py \
 
 ## 相关文档
 
-- [CAE/PINN 训练指南](./instruction_deepCAE.md)
-- [DeepSets+PINN 训练指南](./instruction_deepsets.md)
-- [配置文件说明](./configs/README.md)
+- [配置文件说明](../configs/README.md)
+- [模型结构说明](../model/model_networks_overview.md)
 
 ---
 

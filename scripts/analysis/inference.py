@@ -17,7 +17,7 @@ Usage:
     uv run python inference.py --input noisy.mat --output results/
 
     # With custom model checkpoint
-    uv run python inference.py --input noisy.mat --output results/ --checkpoint results/checkpoints/best_model.pth
+    uv run python inference.py --input noisy.mat --output results/ --checkpoint results/checkpoints/best_pinn_model.pth
 
     # Specify grid size (if different from default 21x21)
     uv run python inference.py --input noisy.mat --output results/ --cols 21 --rows 21
@@ -37,7 +37,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Optional
 
-from model.model import DeepCAE, DeeperCAE, LightweightCAE, UnsupervisedDeepCAE
+from model.model import DeepCAE
 from scripts.transformer import (
     load_mat_file,
     reshape_to_grid,
@@ -61,6 +61,21 @@ def _ensure_parent_dir(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _print_signal_stats(tag: str, signals: np.ndarray) -> None:
+    """Print concise signal statistics for debugging numerical issues."""
+    if signals.size == 0:
+        print(f"[WARNING] {tag}: empty signal array")
+        return
+
+    nonzero_ratio = float(np.count_nonzero(signals)) / float(signals.size)
+    print(
+        f"[INFO] {tag}: shape={signals.shape}, dtype={signals.dtype}, "
+        f"min={signals.min():.6e}, max={signals.max():.6e}, "
+        f"mean={signals.mean():.6e}, std={signals.std():.6e}, "
+        f"nonzero_ratio={nonzero_ratio:.6f}"
+    )
+
+
 def load_model(
     checkpoint_path: str, model_type: str = "deep", device: torch.device = None
 ) -> torch.nn.Module:
@@ -69,7 +84,7 @@ def load_model(
 
     Args:
         checkpoint_path: Path to model checkpoint (.pth file)
-        model_type: Model architecture ('lightweight', 'deeper', 'deep', 'unsupervised_deep')
+        model_type: Model architecture (kept for backward compatibility)
         device: Device to load model on
 
     Returns:
@@ -105,20 +120,7 @@ def load_model(
 
     base_channels = int(enc1_weight.shape[0])
 
-    has_unsupervised_bottleneck = any(
-        key.startswith("bottleneck_compress.") or key.startswith("bottleneck_expand.")
-        for key in state_dict.keys()
-    )
-    checkpoint_unsupervised_flag = bool(checkpoint.get("unsupervised", False)) if isinstance(checkpoint, dict) else False
-
     resolved_model_type = model_type
-    if has_unsupervised_bottleneck or checkpoint_unsupervised_flag:
-        resolved_model_type = "unsupervised_deep"
-        if model_type != "unsupervised_deep":
-            print(
-                "[WARNING] Checkpoint indicates unsupervised bottleneck architecture; "
-                "overriding --model to 'unsupervised_deep'."
-            )
 
     print(f"[INFO] Loading model from {checkpoint_path}")
     print(f"[INFO] Requested model type: {model_type}")
@@ -127,34 +129,7 @@ def load_model(
     print(f"[INFO] Device: {device}")
 
     # Initialize model based on resolved type and inferred channels
-    if resolved_model_type == "unsupervised_deep":
-        bottleneck_weight = state_dict.get("bottleneck_compress.0.weight")
-        if bottleneck_weight is None:
-            raise ValueError(
-                "Checkpoint indicates unsupervised model, but missing "
-                "'bottleneck_compress.0.weight'"
-            )
-        bottleneck_channels = int(bottleneck_weight.shape[0])
-        print(
-            "[INFO] Inferred bottleneck_channels from checkpoint: "
-            f"{bottleneck_channels}"
-        )
-        model = UnsupervisedDeepCAE(
-            base_channels=base_channels,
-            dropout_rate=0.0,
-            bottleneck_channels=bottleneck_channels,
-        )
-    elif resolved_model_type == "deep":
-        model = DeepCAE(base_channels=base_channels, dropout_rate=0.0)
-    elif resolved_model_type == "deeper":
-        model = DeeperCAE(base_channels=base_channels, dropout_rate=0.0)
-    elif resolved_model_type == "lightweight":
-        model = LightweightCAE(base_channels=base_channels, dropout_rate=0.0)
-    else:
-        raise ValueError(
-            "Unsupported model_type: "
-            f"{resolved_model_type}. Choose from lightweight/deeper/deep/unsupervised_deep"
-        )
+    model = DeepCAE(base_channels=base_channels, dropout_rate=0.0)
 
     model.load_state_dict(state_dict)
 
@@ -298,7 +273,9 @@ def denoise_signals(
     """
     model.eval()
     n_signals = signals.shape[0]
-    denoised = np.zeros_like(signals)
+    # Keep denoising output in float64 to avoid underflow when later
+    # restoring ultra-small physical amplitudes.
+    denoised = np.zeros(signals.shape, dtype=np.float64)
 
     print(f"\n[INFO] Denoising {n_signals} signals...")
 
@@ -314,7 +291,7 @@ def denoise_signals(
             output = model(batch_tensor)
 
             # Remove channel dimension and move to CPU
-            denoised[i:end_idx] = output.squeeze(1).cpu().numpy()
+            denoised[i:end_idx] = output.squeeze(1).cpu().numpy().astype(np.float64)
 
             # Progress
             if (i + batch_size) % (batch_size * 10) == 0 or end_idx == n_signals:
@@ -342,7 +319,9 @@ def denormalize_signals(denoised_normalized: np.ndarray, metadata: dict) -> np.n
     signal_mins = metadata["signal_mins"]
     signal_maxs = metadata["signal_maxs"]
 
-    denoised = np.zeros_like(denoised_normalized)
+    # Preserve float64 precision during inverse scaling to prevent tiny signals
+    # from being rounded to zero in float32.
+    denoised = np.zeros(denoised_normalized.shape, dtype=np.float64)
 
     for i in range(denoised_normalized.shape[0]):
         # Reverse normalization: normalized = 2 * (x - min) / (max - min) - 1
@@ -357,19 +336,23 @@ def denormalize_signals(denoised_normalized: np.ndarray, metadata: dict) -> np.n
 
         if amplitude_range > min_threshold:
             # Normal denormalization
-            denoised[i] = (denoised_normalized[i] + 1) / 2 * amplitude_range + min_val
+            denoised[i] = (
+                denoised_normalized[i].astype(np.float64) + 1.0
+            ) / 2.0 * amplitude_range + min_val
         else:
             # Signal was nearly flat during normalization
             # For very small signals, preserve the denoised structure
             if amplitude_range > 0:
                 # Even tiny signals should be denormalized properly
                 denoised[i] = (
-                    denoised_normalized[i] + 1
-                ) / 2 * amplitude_range + min_val
+                    denoised_normalized[i].astype(np.float64) + 1.0
+                ) / 2.0 * amplitude_range + min_val
             else:
                 # Truly flat signal (constant value)
                 # Restore to the constant value (min_val == max_val)
-                denoised[i] = np.full_like(denoised_normalized[i], min_val)
+                denoised[i] = np.full_like(
+                    denoised_normalized[i], min_val, dtype=np.float64
+                )
 
     return denoised
 
@@ -459,7 +442,7 @@ def save_to_mat(
 def run_inference(
     input_path: str,
     output_path: str,
-    checkpoint_path: str = str(CHECKPOINTS_DIR / "best_model.pth"),
+    checkpoint_path: str = str(CHECKPOINTS_DIR / "best_pinn_model.pth"),
     model_type: str = "deep",
     grid_cols: int = 21,
     grid_rows: int = 21,
@@ -516,13 +499,23 @@ def run_inference(
         interpolation_method=interpolation_method,
         target_signal_length=target_signal_length,
     )
+    _print_signal_stats("Input (normalized)", normalized_signals)
+    _print_signal_stats("Input (original scale)", original_signals)
 
     # Run denoising
     denoised_normalized = denoise_signals(model, normalized_signals, device, batch_size)
+    _print_signal_stats("Model output (normalized)", denoised_normalized)
 
     # Denormalize
     print("\n[INFO] Denormalizing signals...")
     denoised = denormalize_signals(denoised_normalized, metadata)
+    _print_signal_stats("Model output (original scale)", denoised)
+
+    if np.count_nonzero(denoised) == 0 and np.count_nonzero(denoised_normalized) > 0:
+        print(
+            "[WARNING] Denormalized output is all zeros while normalized output is not. "
+            "This usually indicates numerical underflow from tiny amplitudes."
+        )
 
     # Save results
     output_dir = Path(output_path)
@@ -530,14 +523,7 @@ def run_inference(
     image_dir = output_dir / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
-    comparison_fig = str(
-        image_dir
-        / (
-            "fig_unsupervised_inferenced.png"
-            if model_type == "unsupervised_deep"
-            else "fig_inferenced.png"
-        )
-    )
+    comparison_fig = str(image_dir / ("fig_inferenced.png"))
     plot_inference_comparison(original_signals, denoised, comparison_fig)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -631,7 +617,7 @@ def main():
         "--checkpoint",
         "-c",
         type=str,
-        default=str(CHECKPOINTS_DIR / "best_model.pth"),
+        default=str(CHECKPOINTS_DIR / "best_pinn_model.pth"),
         help="Path to model checkpoint",
     )
     parser.add_argument(
@@ -639,7 +625,7 @@ def main():
         "-m",
         type=str,
         default="deep",
-        choices=["lightweight", "deeper", "deep", "unsupervised_deep"],
+        choices=["deep"],
         help="Model architecture",
     )
 
