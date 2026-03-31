@@ -1,12 +1,8 @@
 # Ultrasonic Signal Denoising (PINN / DeepSets-PINN)
 
-<<<<<<< HEAD
 运行训练查看[配置文件说明](configs/README.md)
 
 Ultrasonic 1D signal denoising project for NDT workflows, with three training pipelines:
-=======
-本项目用于超声 1D 信号去噪（NDT 场景），当前主流程已统一到：
->>>>>>> 5f3256ec31bf8ba387ee869171bbd40c481166ca
 
 - 训练入口：`scripts/train/train.py`
 - 一体化流程入口：`scripts/run_unified_pipeline.py`
