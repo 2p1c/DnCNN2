@@ -1,0 +1,1323 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://2p1c.github.io/Laser-NDT-Based-NN/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="." title="Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising" class="md-header__button md-logo" aria-label="Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              基于神经网络去噪的非接触式激光超声缺陷检测
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="." title="Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising" class="md-nav__button md-logo" aria-label="Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Non-Contact Laser Ultrasonic Testing Based on Neural Network Denoising
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    基于神经网络去噪的非接触式激光超声缺陷检测
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="." class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    基于神经网络去噪的非接触式激光超声缺陷检测
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        项目概述
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="项目概述">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        项目背景
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心方法
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        技术亮点
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速开始
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="快速开始">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        环境配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        一键运行完整流程
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        分步运行
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="分步运行">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 数据转换
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 模型训练
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 推理去噪
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="核心参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        信号参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        物理参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出目录结构
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        统一管线配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="统一管线配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置参数说明
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推理网格与训练网格分离
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        声学验证
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        调参建议
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="调参建议">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        训练问题与对策
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐配置组合
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#project-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        项目概述
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="项目概述">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        项目背景
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心方法
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        技术亮点
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速开始
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="快速开始">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        环境配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        一键运行完整流程
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        分步运行
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="分步运行">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 数据转换
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 模型训练
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 推理去噪
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心参数
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="核心参数">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        信号参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        网格参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        物理参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出目录结构
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        统一管线配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="统一管线配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置参数说明
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推理网格与训练网格分离
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        声学验证
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        调参建议
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="调参建议">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        训练问题与对策
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐配置组合
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#project-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="_1">基于神经网络去噪的非接触式激光超声缺陷检测</h1>
+<blockquote>
+<p>完整项目代码：<a href="https://github.com/2p1c/Laser-NDT-Based-NN.git">Laser-NDT-Based-NN</a>.</p>
+</blockquote>
+<h2 id="_2">项目概述</h2>
+<h3 id="_3">项目背景</h3>
+<p>非接触式激光超声检测（Laser Ultrasonic Testing, LUT）是一种先进的无损检测技术，利用激光产生和接收超声波信号来检测材料中的缺陷。然而，LUT信号通常受到环境噪声和系统噪声的干扰，导致信噪比（SNR）较低，影响检测的准确性和可靠性。</p>
+<p>激光超声依靠热膨胀效应产生超声波，但实际实验中激光参数与环境因素难以完全稳定控制。激光电压、光斑尺寸、材料热扩散特性、激励频率等都会影响信号质量与一致性。</p>
+<h3 id="_4">核心方法</h3>
+<p>本项目采用深度学习方法对激光超声信号进行去噪处理，当前主流程提供两种训练 pipeline：</p>
+<table>
+<thead>
+<tr>
+<th>Pipeline</th>
+<th>特点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PINN</strong></td>
+<td>基于 DeepCAE 主干 + 物理损失</td>
+<td>需要保持时域物理一致性</td>
+</tr>
+<tr>
+<td><strong>DeepSets+PINN</strong></td>
+<td>Patch 级空间建模 + 物理约束</td>
+<td>大面积扫描、复杂空间相关性</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_5">技术亮点</h3>
+<ul>
+<li><strong>Physics-Informed Neural Network (PINN)</strong>：将一维声波方程物理约束嵌入损失函数，确保去噪后的信号符合物理规律</li>
+<li><strong>DeepSets PINN</strong>：利用 patch/set 空间结构建模邻域关系</li>
+<li><strong>声学特征验证</strong>：自动对比去噪前后的主频、频带能量、频谱相干性等声学指标</li>
+<li><strong>统一推理管线</strong>：支持训练与推理使用不同网格尺寸（灵活应对实际检测场景）</li>
+</ul>
+<hr />
+<h2 id="_6">快速开始</h2>
+<h3 id="_7">环境配置</h3>
+<pre><code class="language-bash"># 安装依赖
+uv sync
+
+# 可选：安装开发依赖
+uv sync --group dev
+</code></pre>
+<h3 id="_8">一键运行完整流程</h3>
+<pre><code class="language-bash"># 使用统一管线（transform → train → inference → validation）
+uv run python scripts/run_unified_pipeline.py \
+    --config configs/pipeline_pinn_template.json
+</code></pre>
+<h3 id="_9">分步运行</h3>
+<h4 id="1">1. 数据转换</h4>
+<p>将实验 <code>.mat</code> 数据转换为训练格式：</p>
+<pre><code class="language-bash">uv run python scripts/transformer.py \
+    --noisy data/noisy_21x21.mat \
+    --clean data/clean_41x41.mat \
+    --output data
+</code></pre>
+<h4 id="2">2. 模型训练</h4>
+<pre><code class="language-bash"># PINN (推荐)
+uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data
+
+# DeepSets + PINN
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data
+</code></pre>
+<h4 id="3">3. 推理去噪</h4>
+<pre><code class="language-bash"># CAE / PINN 推理
+uv run python scripts/analysis/inference.py \
+    --input noisy.mat \
+    --output results/
+
+# DeepSets 推理
+uv run python scripts/analysis/inference_deepsets.py \
+    --input noisy.mat \
+    --output results/
+</code></pre>
+<hr />
+<h2 id="_10">核心参数</h2>
+<h3 id="_11">信号参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>采样率</td>
+<td>6.25 MHz</td>
+<td></td>
+</tr>
+<tr>
+<td>信号时长</td>
+<td>160 μs</td>
+<td></td>
+</tr>
+<tr>
+<td>采样点数</td>
+<td>1000</td>
+<td></td>
+</tr>
+<tr>
+<td>中心频率</td>
+<td>250 kHz</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_12">网格参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>输入网格</td>
+<td>21×21</td>
+<td>噪声信号网格尺寸</td>
+</tr>
+<tr>
+<td>目标网格</td>
+<td>41×41</td>
+<td>干净信号/输出网格尺寸</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_13">物理参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>声速</td>
+<td>5900 m/s</td>
+<td>钢中典型值</td>
+</tr>
+<tr>
+<td>阻尼比</td>
+<td>0.05</td>
+<td>PINN 物理损失参数</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_14">输出目录结构</h2>
+<pre><code>DnCNN2/
+├── results/
+│   ├── checkpoints/     # 模型权重
+│   │   ├── best_pinn_model.pth
+│   │   └── best_deepsets_pinn.pth
+│   ├── images/          # 可视化结果
+│   └── *.mat           # 推理输出
+├── data/               # 转换后的训练数据
+│   ├── train/noisy/
+│   ├── train/clean/
+│   ├── val/noisy/
+│   └── val/clean/
+└── experiments/        # 实验记录
+</code></pre>
+<hr />
+<h2 id="_15">统一管线配置</h2>
+<p>推荐使用 JSON 配置文件运行统一管线：</p>
+<pre><code class="language-bash">uv run python scripts/run_unified_pipeline.py \
+    --config configs/pipeline_pinn_template.json
+</code></pre>
+<p>配置文件示例（<code>configs/pipeline_pinn_template.json</code>）：</p>
+<pre><code class="language-json">{
+  &quot;pipeline&quot;: &quot;pinn&quot;,
+  &quot;noisy_mat&quot;: &quot;data/noisy.mat&quot;,
+  &quot;clean_mat&quot;: &quot;data/clean.mat&quot;,
+  &quot;inference_input&quot;: &quot;data/noisy.mat&quot;,
+
+  &quot;input_cols&quot;: 21,
+  &quot;input_rows&quot;: 21,
+  &quot;target_cols&quot;: 41,
+  &quot;target_rows&quot;: 41,
+
+  &quot;inference_input_cols&quot;: 29,
+  &quot;inference_input_rows&quot;: 29,
+  &quot;inference_target_cols&quot;: 57,
+  &quot;inference_target_rows&quot;: 57,
+
+  &quot;epochs&quot;: 50,
+  &quot;batch_size&quot;: 32,
+  &quot;lr&quot;: 0.001,
+  &quot;physics_weight&quot;: 0.001
+}
+</code></pre>
+<h3 id="_16">配置参数说明</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pipeline</code></td>
+<td>选择训练管线：<code>pinn</code> 或 <code>deepsets</code></td>
+</tr>
+<tr>
+<td><code>noisy_mat</code></td>
+<td>噪声数据路径（transform 阶段）</td>
+</tr>
+<tr>
+<td><code>clean_mat</code></td>
+<td>干净数据路径（transform 阶段）</td>
+</tr>
+<tr>
+<td><code>inference_input</code></td>
+<td>推理输入数据路径</td>
+</tr>
+<tr>
+<td><code>input_cols/rows</code></td>
+<td>训练输入网格尺寸</td>
+</tr>
+<tr>
+<td><code>target_cols/rows</code></td>
+<td>训练目标网格尺寸</td>
+</tr>
+<tr>
+<td><code>inference_*_cols/rows</code></td>
+<td>推理网格尺寸（可与训练不同）</td>
+</tr>
+<tr>
+<td><code>skip_transform</code></td>
+<td>跳过数据转换，复用已有 data/</td>
+</tr>
+<tr>
+<td><code>skip_train</code></td>
+<td>跳过训练，直接推理</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_17">推理网格与训练网格分离</h2>
+<p>训练和推理可以使用不同的网格尺寸，这是本项目的重要特性：</p>
+<ul>
+<li><strong>训练网格</strong>：由 <code>input_cols/input_rows/target_cols/target_rows</code> 指定</li>
+<li><strong>推理网格</strong>：由 <code>inference_input_cols/inference_input_rows/inference_target_cols/inference_target_rows</code> 指定</li>
+</ul>
+<p>这使得你可以：
+- 用小面积标注数据训练模型
+- 对大面积扫描区域进行推理</p>
+<hr />
+<h2 id="_18">声学验证</h2>
+<p>推理过程中会自动进行声学特征验证，对比去噪前后的：</p>
+<ul>
+<li>主频 (Dominant Frequency)</li>
+<li>子频带能量 (Sub-band Energy)</li>
+<li>频谱相干性 (Spectral Coherence)</li>
+<li>峰值振幅 (Peak Amplitude)</li>
+</ul>
+<p>验证结果保存为图像文件，并输出终端报告。</p>
+<hr />
+<h2 id="_19">调参建议</h2>
+<h3 id="_20">训练问题与对策</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>解决方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>验证 PSNR 不升反降</td>
+<td>降低学习率至 <code>5e-4</code> 或 <code>1e-4</code></td>
+</tr>
+<tr>
+<td>训练不稳定/震荡</td>
+<td>减小 <code>physics_weight</code>，或减小 <code>batch_size</code></td>
+</tr>
+<tr>
+<td>去噪很强但信号形态变差</td>
+<td>适度减小 <code>physics_weight</code>、减小 <code>dropout</code></td>
+</tr>
+<tr>
+<td>高频细节丢失</td>
+<td>DeepSets 里尝试 <code>patch_size=7</code>，提高 <code>epochs</code></td>
+</tr>
+<tr>
+<td>小振幅信号插值异常</td>
+<td><code>interp_method</code> 改为 <code>linear</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_21">推荐配置组合</h3>
+<p><strong>快速验证（先跑通）</strong>：</p>
+<pre><code class="language-json">{
+  &quot;epochs&quot;: 20,
+  &quot;batch_size&quot;: 16,
+  &quot;lr&quot;: 0.001
+}
+</code></pre>
+<p><strong>稳健训练（推荐）</strong>：</p>
+<pre><code class="language-json">{
+  &quot;epochs&quot;: 80,
+  &quot;batch_size&quot;: 32,
+  &quot;lr&quot;: 0.0005,
+  &quot;patience&quot;: 50,
+  &quot;min_epochs&quot;: 30
+}
+</code></pre>
+<p><strong>强物理约束</strong>：</p>
+<pre><code class="language-json">{
+  &quot;physics_weight&quot;: 0.005,
+  &quot;epochs&quot;: 100,
+  &quot;lr&quot;: 0.0005
+}
+</code></pre>
+<hr />
+<h2 id="_22">相关文档</h2>
+<ul>
+<li><a href="../configs/README.md">配置文件说明</a></li>
+<li><a href="../model/model_networks_overview.md">模型结构说明</a></li>
+</ul>
+<hr />
+<h2 id="project-layout">Project layout</h2>
+<pre><code>mkdocs.yml    # The configuration file.
+docs/
+    index.md  # The documentation homepage.
+    ...       # Other markdown pages, images and other files.
+</code></pre>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["footer.hide.copyright"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

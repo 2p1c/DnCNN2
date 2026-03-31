@@ -1,0 +1,14 @@
+/* 隐藏页脚的主题标识信息 */
+.md-copyright {
+  display: none;
+}
+
+/* 隐藏整个页脚 */
+.md-footer {
+  display: none;
+}
+
+.md-footer-meta__inner {
+  display: none;
+
+}
