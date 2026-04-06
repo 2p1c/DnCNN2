@@ -7,15 +7,15 @@ clear; clc; close all;
 % 所有可调参数集中在此处,方便修改
 
 % 数据文件路径
-data_file = "E:\数据\260310\45_45dingwei2\data.mat";
+data_file = "/Users/zyt/ANW/DnCNN2/results/best/20260331_212623/denoised_20260331_213005_full.mat";
 
 % 点阵参数
-n_points = [45, 45];     % 点阵大小: 标量(正方形) 或 [n_x, n_y](矩形)
+n_points = [41, 41];     % 点阵大小: 标量(正方形) 或 [n_x, n_y](矩形)
 spacing = 1e-3;          % 物理间距 (m), 1mm
 
 % 带通滤波器参数
 center_freq = 200e3;     % 中心频率 (Hz)
-bandwidth = 50e3;        % 带宽 (Hz)
+bandwidth = 200e3;        % 带宽 (Hz)
 filter_order = 2;        % 滤波器阶数
 
 % 小波去噪参数

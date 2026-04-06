@@ -10,12 +10,7 @@
 2. `DeepCAE_PINN`
 3. `DeepSetsPINN`
 
-并且有如下约束：
-
 - `DeepCAE_PINN` 继承自 `DeepCAE`。
-- `SpatialAuxiliaryCAE` 已删除。
-- 原先的重命名别名（如 `SpatialContextCAE`、`SetInvariantWavePINN`）不再作为独立模型入口。
-- `model/model_deepsets.py` 已移除，不再维护双模型文件结构。
 
 ---
 
