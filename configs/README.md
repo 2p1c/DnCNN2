@@ -161,22 +161,28 @@ uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_tem
 
 ## 6) 实用命令
 
-- 使用模板运行，启用日志记录功能：
+- **使用模板运行，启用日志记录功能**：
 
 ```bash
+
 uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_template.json --log_experiment
+
 ```
 
-- 用模板 + 临时覆盖参数：
+- **用模板 + 临时覆盖参数**：
 
 ```bash
+
 uv run python scripts/run_unified_pipeline.py --config configs/pipeline_deepsets_template.json --epochs 100 --lr 5e-4
+
 ```
 
-- 跳过训练只做推理+验证：
+- **跳过训练只做推理+验证**：
 
 ```bash
+
 uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_template.json --skip_train
+
 ```
 
 ## 注：布尔参数推荐在 JSON 中改（`true/false`）。命令行上 `--skip_train` 出现即为开启。

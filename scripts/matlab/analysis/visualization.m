@@ -5,7 +5,7 @@ clear; clc; close all;
 
 %% 数据预处理：加载并重塑蛇形扫描数据
 % 加载原始数据
-load('/Users/zyt/ANW/DnCNN2/results/best/20260331_212623/denoised_20260331_213005_full.mat'); % 包含变量 x (1×2500) 和 y (961×2500)
+load('/Volumes/ESD-ISO/数据/260407/liewen_200k_600k_41_41/AvgOff/data.mat'); % 包含变量 x (1×2500) 和 y (961×2500)
 
 % 计算采样率和时间向量
 data_time = x; % 时间向量
