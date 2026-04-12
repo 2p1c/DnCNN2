@@ -94,6 +94,26 @@ uv run python scripts/run_unified_pipeline.py --config configs/pipeline_pinn_tem
 | `base_channels` | 基础通道数            | `16` 起步         |
 | `coord_dim`     | 坐标嵌入维度          | `64`              |
 
+#### DeepSets TF-Fusion 扩展参数
+
+当 `model_type=tf_fusion` 时，transform 阶段会额外生成 `train/tf` 和 `val/tf`。
+
+| 参数 | 作用 | 推荐 |
+|---|---|---|
+| `signal_embed_dim` | 时域分支嵌入维度 | `128` |
+| `coord_embed_dim` | 坐标分支嵌入维度 | `64` |
+| `point_dim` | 点特征维度 | `128` |
+| `tf_embed_dim` | 时频分支嵌入维度 | 与 `signal_embed_dim` 相同 |
+| `stft_n_fft` | STFT FFT 长度 | `128` |
+| `stft_hop_length` | STFT 帧移 | `32` |
+| `stft_win_length` | STFT 窗长 | `128` |
+| `stft_window` | STFT 窗函数 | `hann` |
+| `stft_pooling` | 频轴压缩方式 | `mean` |
+| `fusion_mode` | 时域/时频融合方式 | `gated`（主方法）/`concat`（消融） |
+| `debug_numerics` | 启用 NaN/Inf 检查 | `false` |
+
+注意：训练与推理的 STFT 参数必须一致。`inference_deepsets.py` 在 `tf_fusion` 模式会和 checkpoint 参数严格比对，不一致会报错退出。
+
 ### H. 推理与验证
 
 | 参数                   | 作用           | 推荐     |

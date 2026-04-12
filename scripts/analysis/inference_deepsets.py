@@ -25,8 +25,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple
 
-from model.model import DeepSetsPINN
+from model.model import DeepSetsPINN, DeepSetsPINN_TF
 from data import GRID_SPACING
+from data.tf_features import build_tf_features_from_processed_signals
 from scripts.transformer import (
     load_mat_file,
     reshape_to_grid,
@@ -50,6 +51,9 @@ CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
 
 def load_model(
     checkpoint_path: str,
+    model_type: str = "deepsets",
+    fusion_mode: str | None = None,
+    debug_numerics: bool = False,
     device: torch.device = None,
 ) -> Tuple[nn.Module, dict]:
     """
@@ -75,24 +79,43 @@ def load_model(
 
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
+    ckpt_model_type = str(ckpt.get("model_type", "deepsets"))
+    if ckpt_model_type != model_type:
+        raise ValueError(
+            f"Checkpoint model_type mismatch: checkpoint={ckpt_model_type}, requested={model_type}"
+        )
+
     # Reconstruct model with saved config
     dx = ckpt.get("dx", GRID_SPACING)
     dy = ckpt.get("dy", GRID_SPACING)
     wave_speed = ckpt.get("wave_speed", 5900.0)
     base_channels = ckpt.get("base_channels", 16)
     coord_dim = ckpt.get("coord_dim", 64)
-    model = DeepSetsPINN(
-        signal_embed_dim=ckpt.get("signal_embed_dim", 128),
-        coord_embed_dim=coord_dim,
-        point_dim=ckpt.get("point_dim", 128),
-        base_channels=base_channels,
-        dropout_rate=0.0,
-        wave_speed=wave_speed,
-        center_frequency=ckpt.get("center_frequency", 250e3),
-        dx=dx,
-        dy=dy,
-        patch_size=ckpt.get("patch_size", 5),
-    )
+    resolved_fusion_mode = fusion_mode
+    if resolved_fusion_mode is None:
+        resolved_fusion_mode = str(ckpt.get("fusion_mode", "gated"))
+
+    common_kwargs = {
+        "signal_embed_dim": ckpt.get("signal_embed_dim", 128),
+        "coord_embed_dim": coord_dim,
+        "point_dim": ckpt.get("point_dim", 128),
+        "base_channels": base_channels,
+        "dropout_rate": 0.0,
+        "wave_speed": wave_speed,
+        "center_frequency": ckpt.get("center_frequency", 250e3),
+        "dx": dx,
+        "dy": dy,
+        "patch_size": ckpt.get("patch_size", 5),
+    }
+    if model_type == "tf_fusion":
+        model = DeepSetsPINN_TF(
+            **common_kwargs,
+            tf_embed_dim=ckpt.get("tf_embed_dim", ckpt.get("signal_embed_dim", 128)),
+            fusion_mode=resolved_fusion_mode,
+            debug_numerics=debug_numerics,
+        )
+    else:
+        model = DeepSetsPINN(**common_kwargs)
 
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device)
@@ -190,10 +213,12 @@ def preprocess_mat_data(
 def denoise_grid(
     model: nn.Module,
     normalised_signals: np.ndarray,
+    tf_signals: np.ndarray | None = None,
     grid_cols: int = 41,
     grid_rows: int = 41,
     patch_size: int = 5,
     device: torch.device = None,
+    model_type: str = "deepsets",
 ) -> np.ndarray:
     """
     Denoise the full grid by sweeping patches across it.
@@ -256,7 +281,17 @@ def denoise_grid(
                 coord = torch.from_numpy(coords_all[indices]).unsqueeze(0).to(device)
 
                 # Forward
-                out = model(sig, coord)  # (1, R, T)
+                if model_type == "tf_fusion":
+                    if tf_signals is None:
+                        raise ValueError(
+                            "tf_signals is required when model_type=tf_fusion"
+                        )
+                    tf_patch = (
+                        torch.from_numpy(tf_signals[indices]).unsqueeze(0).to(device)
+                    )
+                    out = model(sig, tf_patch, coord)  # (1, R, T)
+                else:
+                    out = model(sig, coord)  # (1, R, T)
                 out_np = out.squeeze(0).cpu().numpy()
 
                 # Accumulate all R predictions
@@ -322,8 +357,16 @@ def run_inference(
     target_cols: int = 41,
     target_rows: int = 41,
     patch_size: int = 5,
+    model_type: str = "deepsets",
+    fusion_mode: str | None = None,
+    debug_numerics: bool = False,
     interpolation_method: str = "cubic",
     target_signal_length: int = 1000,
+    stft_n_fft: int = 128,
+    stft_hop_length: int = 32,
+    stft_win_length: int = 128,
+    stft_window: str = "hann",
+    stft_pooling: str = "mean",
     validation_save_path: str | None = None,
 ) -> str:
     """
@@ -355,7 +398,53 @@ def run_inference(
         device = torch.device("cpu")
 
     # Load model
-    model, ckpt = load_model(checkpoint_path, device)
+    model, ckpt = load_model(
+        checkpoint_path,
+        model_type=model_type,
+        fusion_mode=fusion_mode,
+        debug_numerics=debug_numerics,
+        device=device,
+    )
+
+    if model_type == "tf_fusion":
+        ckpt_fusion_mode = str(ckpt.get("fusion_mode", "gated"))
+        runtime_fusion_mode = ckpt_fusion_mode if fusion_mode is None else fusion_mode
+        if runtime_fusion_mode != ckpt_fusion_mode:
+            raise ValueError(
+                "fusion_mode mismatch: "
+                f"checkpoint={ckpt_fusion_mode} runtime={runtime_fusion_mode}"
+            )
+
+    if model_type == "tf_fusion":
+        required_keys = {
+            "stft_n_fft",
+            "stft_hop_length",
+            "stft_win_length",
+            "stft_window",
+            "stft_pooling",
+            "signal_embed_dim",
+            "coord_embed_dim",
+            "point_dim",
+            "tf_embed_dim",
+        }
+        missing = sorted(k for k in required_keys if k not in ckpt)
+        if missing:
+            raise ValueError(
+                "Checkpoint missing required STFT metadata keys for tf_fusion: "
+                + ", ".join(missing)
+            )
+        expected = {
+            "stft_n_fft": stft_n_fft,
+            "stft_hop_length": stft_hop_length,
+            "stft_win_length": stft_win_length,
+            "stft_window": stft_window,
+            "stft_pooling": stft_pooling,
+        }
+        for key, value in expected.items():
+            if ckpt[key] != value:
+                raise ValueError(
+                    f"STFT parameter mismatch for {key}: checkpoint={ckpt[key]} runtime={value}"
+                )
 
     # Preprocess
     normalised, original, metadata = preprocess_mat_data(
@@ -368,9 +457,28 @@ def run_inference(
         target_signal_length,
     )
 
+    tf_normalised = None
+    if model_type == "tf_fusion":
+        tf_normalised = build_tf_features_from_processed_signals(
+            processed_signals=normalised,
+            signal_length=target_signal_length,
+            n_fft=stft_n_fft,
+            hop_length=stft_hop_length,
+            win_length=stft_win_length,
+            window=stft_window,
+            pooling=stft_pooling,
+        )
+
     # Denoise full grid
     denoised_norm = denoise_grid(
-        model, normalised, target_cols, target_rows, patch_size, device
+        model,
+        normalised,
+        tf_signals=tf_normalised,
+        grid_cols=target_cols,
+        grid_rows=target_rows,
+        patch_size=patch_size,
+        device=device,
+        model_type=model_type,
     )
 
     # Denormalise
@@ -441,6 +549,7 @@ def run_inference(
     print("Inference Complete!")
     print("=" * 60)
     print(f"  Acoustic validation: {validation_fig}")
+    print(f"  Model type: {model_type}")
     return str(out_file)
 
 
@@ -473,9 +582,21 @@ if __name__ == "__main__":
     parser.add_argument("--target_rows", type=int, default=41)
     parser.add_argument("--patch_size", type=int, default=5)
     parser.add_argument(
+        "--model_type", choices=["deepsets", "tf_fusion"], default="deepsets"
+    )
+    parser.add_argument("--fusion_mode", choices=["gated", "concat"], default=None)
+    parser.add_argument("--debug_numerics", action="store_true")
+    parser.add_argument(
         "--interp_method", type=str, default="cubic", choices=["linear", "cubic"]
     )
     parser.add_argument("--signal_length", type=int, default=1000)
+    parser.add_argument("--stft_n_fft", type=int, default=128)
+    parser.add_argument("--stft_hop_length", type=int, default=32)
+    parser.add_argument("--stft_win_length", type=int, default=128)
+    parser.add_argument("--stft_window", type=str, default="hann")
+    parser.add_argument(
+        "--stft_pooling", choices=["mean", "max", "meanmax"], default="mean"
+    )
 
     args = parser.parse_args()
 
@@ -488,6 +609,14 @@ if __name__ == "__main__":
         target_cols=args.target_cols,
         target_rows=args.target_rows,
         patch_size=args.patch_size,
+        model_type=args.model_type,
+        fusion_mode=args.fusion_mode,
+        debug_numerics=args.debug_numerics,
         interpolation_method=args.interp_method,
         target_signal_length=args.signal_length,
+        stft_n_fft=args.stft_n_fft,
+        stft_hop_length=args.stft_hop_length,
+        stft_win_length=args.stft_win_length,
+        stft_window=args.stft_window,
+        stft_pooling=args.stft_pooling,
     )

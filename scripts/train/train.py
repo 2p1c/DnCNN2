@@ -17,7 +17,7 @@ from tqdm import tqdm
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from data import GRID_SPACING, create_dataloaders, create_deepsets_dataloaders
-from model.model import DeepCAE_PINN, DeepSetsPINN, count_parameters
+from model.model import DeepCAE_PINN, DeepSetsPINN, DeepSetsPINN_TF, count_parameters
 from scripts.analysis import acoustic_validation as av
 from scripts.analysis.acoustic_validation import run_acoustic_validation
 from scripts.train.visualization import plot_results
@@ -226,13 +226,14 @@ def validate_pinn(
 
 
 def train_epoch_deepsets(
-    model: DeepSetsPINN,
+    model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     criterion: DeepSetsPINNLoss,
     optimizer: optim.Optimizer,
     device: torch.device,
     grid_cols: int,
     grid_rows: int,
+    model_type: str,
 ) -> Tuple[float, float, float, float]:
     model.train()
     total_sum, data_sum, phys_sum, psnr_sum, n = 0.0, 0.0, 0.0, 0.0, 0
@@ -242,9 +243,15 @@ def train_epoch_deepsets(
         coords = batch["coordinates"].to(device)
         grid_idx = batch["grid_indices"].to(device)
 
-        denoised, residual = model.physics_forward(
-            noisy, coords, grid_idx, grid_cols, grid_rows
-        )
+        if model_type == "tf_fusion":
+            tf_signals = batch["tf_signals"].to(device)
+            denoised, residual = model.physics_forward(
+                noisy, tf_signals, coords, grid_idx, grid_cols, grid_rows
+            )
+        else:
+            denoised, residual = model.physics_forward(
+                noisy, coords, grid_idx, grid_cols, grid_rows
+            )
         total, data_loss, phys_loss = criterion(denoised, clean, residual)
 
         optimizer.zero_grad()
@@ -262,12 +269,13 @@ def train_epoch_deepsets(
 
 
 def validate_deepsets(
-    model: DeepSetsPINN,
+    model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     criterion: DeepSetsPINNLoss,
     device: torch.device,
     grid_cols: int,
     grid_rows: int,
+    model_type: str,
 ) -> Tuple[float, float, float, float]:
     model.eval()
     total_sum, data_sum, phys_sum, psnr_sum, n = 0.0, 0.0, 0.0, 0.0, 0
@@ -277,9 +285,15 @@ def validate_deepsets(
             clean = batch["clean_signals"].to(device)
             coords = batch["coordinates"].to(device)
             grid_idx = batch["grid_indices"].to(device)
-            denoised, residual = model.physics_forward(
-                noisy, coords, grid_idx, grid_cols, grid_rows
-            )
+            if model_type == "tf_fusion":
+                tf_signals = batch["tf_signals"].to(device)
+                denoised, residual = model.physics_forward(
+                    noisy, tf_signals, coords, grid_idx, grid_cols, grid_rows
+                )
+            else:
+                denoised, residual = model.physics_forward(
+                    noisy, coords, grid_idx, grid_cols, grid_rows
+                )
             total, data_loss, phys_loss = criterion(denoised, clean, residual)
 
             total_sum += total.item()
@@ -347,24 +361,28 @@ def plot_pinn_training_curves(history: Dict[str, list], save_path: str) -> None:
 
 
 def plot_deepsets_sample_results(
-    model: DeepSetsPINN,
+    model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     device: torch.device,
     save_path: str,
     n_samples: int = 6,
+    model_type: str = "deepsets",
 ) -> None:
     model.eval()
-    all_noisy, all_clean, all_coords = [], [], []
+    all_noisy, all_clean, all_coords, all_tf = [], [], [], []
     for batch in dataloader:
         all_noisy.append(batch["noisy_signals"])
         all_clean.append(batch["clean_signals"])
         all_coords.append(batch["coordinates"])
+        if model_type == "tf_fusion":
+            all_tf.append(batch["tf_signals"])
         if len(all_noisy) * batch["noisy_signals"].shape[0] >= 100:
             break
 
     all_noisy = torch.cat(all_noisy, dim=0)
     all_clean = torch.cat(all_clean, dim=0)
     all_coords = torch.cat(all_coords, dim=0)
+    all_tf_tensor = torch.cat(all_tf, dim=0) if model_type == "tf_fusion" else None
     total = all_noisy.shape[0]
     n_samples = min(n_samples, total)
     idx = np.random.choice(total, size=n_samples, replace=False)
@@ -372,9 +390,13 @@ def plot_deepsets_sample_results(
     noisy = all_noisy[idx]
     clean = all_clean[idx]
     coords = all_coords[idx]
+    tf_signals = all_tf_tensor[idx] if all_tf_tensor is not None else None
 
     with torch.no_grad():
-        denoised = model(noisy.to(device), coords.to(device))
+        if model_type == "tf_fusion":
+            denoised = model(noisy.to(device), tf_signals.to(device), coords.to(device))
+        else:
+            denoised = model(noisy.to(device), coords.to(device))
 
     noisy_np = noisy.cpu().numpy()
     clean_np = clean.cpu().numpy()
@@ -427,33 +449,43 @@ def plot_deepsets_sample_results(
 
 
 def run_deepsets_acoustic_validation(
-    model: DeepSetsPINN,
+    model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     device: torch.device,
     save_path: str,
     num_samples: int = 20,
+    model_type: str = "deepsets",
 ) -> Dict[str, object]:
     model.eval()
-    all_noisy, all_clean, all_coords = [], [], []
+    all_noisy, all_clean, all_coords, all_tf = [], [], [], []
     for batch in dataloader:
         all_noisy.append(batch["noisy_signals"])
         all_clean.append(batch["clean_signals"])
         all_coords.append(batch["coordinates"])
+        if model_type == "tf_fusion":
+            all_tf.append(batch["tf_signals"])
         if sum(x.shape[0] for x in all_noisy) >= 100:
             break
 
     all_noisy = torch.cat(all_noisy, dim=0)
     all_clean = torch.cat(all_clean, dim=0)
     all_coords = torch.cat(all_coords, dim=0)
+    all_tf_tensor = torch.cat(all_tf, dim=0) if model_type == "tf_fusion" else None
     n = min(num_samples, all_noisy.shape[0])
     indices = np.random.choice(all_noisy.shape[0], size=n, replace=False)
 
     noisy = all_noisy[indices]
     clean = all_clean[indices]
     coords = all_coords[indices]
+    tf_signals = all_tf_tensor[indices] if all_tf_tensor is not None else None
 
     with torch.no_grad():
-        predicted = model(noisy.to(device), coords.to(device))
+        if model_type == "tf_fusion":
+            predicted = model(
+                noisy.to(device), tf_signals.to(device), coords.to(device)
+            )
+        else:
+            predicted = model(noisy.to(device), coords.to(device))
 
     center = noisy.shape[1] // 2
     inp_np = noisy.cpu().numpy()[:, center, :]
@@ -759,13 +791,22 @@ def train_deepsets_pinn(
     signal_embed_dim: int = 128,
     coord_embed_dim: int = 64,
     point_dim: int = 128,
+    tf_embed_dim: int = 128,
+    stft_n_fft: int = 128,
+    stft_hop_length: int = 32,
+    stft_win_length: int = 128,
+    stft_window: str = "hann",
+    stft_pooling: str = "mean",
+    fusion_mode: str = "gated",
+    debug_numerics: bool = False,
 ) -> Tuple[nn.Module, Dict[str, list]]:
-    del model_type, coord_dim
+    del coord_dim
     torch.manual_seed(seed)
     np.random.seed(seed)
     device = _select_device()
 
     print(f"\n[INFO] Loading experimental data from {data_path}...")
+    use_tf = model_type == "tf_fusion"
     train_loader, val_loader = create_deepsets_dataloaders(
         data_root=data_path,
         grid_cols=grid_cols,
@@ -776,20 +817,38 @@ def train_deepsets_pinn(
         dx=dx,
         dy=dy,
         augment=augment,
+        use_tf=use_tf,
     )
 
-    model = DeepSetsPINN(
-        signal_embed_dim=signal_embed_dim,
-        coord_embed_dim=coord_embed_dim,
-        point_dim=point_dim,
-        base_channels=base_channels,
-        dropout_rate=dropout_rate,
-        wave_speed=wave_speed,
-        center_frequency=center_frequency,
-        dx=dx,
-        dy=dy,
-        patch_size=patch_size,
-    ).to(device)
+    if model_type == "tf_fusion":
+        model = DeepSetsPINN_TF(
+            signal_embed_dim=signal_embed_dim,
+            coord_embed_dim=coord_embed_dim,
+            point_dim=point_dim,
+            base_channels=base_channels,
+            dropout_rate=dropout_rate,
+            wave_speed=wave_speed,
+            center_frequency=center_frequency,
+            dx=dx,
+            dy=dy,
+            patch_size=patch_size,
+            tf_embed_dim=tf_embed_dim,
+            fusion_mode=fusion_mode,
+            debug_numerics=debug_numerics,
+        ).to(device)
+    else:
+        model = DeepSetsPINN(
+            signal_embed_dim=signal_embed_dim,
+            coord_embed_dim=coord_embed_dim,
+            point_dim=point_dim,
+            base_channels=base_channels,
+            dropout_rate=dropout_rate,
+            wave_speed=wave_speed,
+            center_frequency=center_frequency,
+            dx=dx,
+            dy=dy,
+            patch_size=patch_size,
+        ).to(device)
 
     print(f"\n[INFO] Model: DeepSetsPINN")
     print(f"[INFO] Total parameters: {count_parameters(model):,}")
@@ -826,10 +885,23 @@ def train_deepsets_pinn(
     pbar = tqdm(range(1, num_epochs + 1), desc="DeepSets PINN Training", unit="epoch")
     for epoch in pbar:
         tr_total, tr_data, tr_phys, tr_psnr = train_epoch_deepsets(
-            model, train_loader, criterion, optimizer, device, grid_cols, grid_rows
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            grid_cols,
+            grid_rows,
+            model_type,
         )
         va_total, va_data, va_phys, va_psnr = validate_deepsets(
-            model, val_loader, criterion, device, grid_cols, grid_rows
+            model,
+            val_loader,
+            criterion,
+            device,
+            grid_cols,
+            grid_rows,
+            model_type,
         )
         scheduler.step(epoch)
 
@@ -868,9 +940,19 @@ def train_deepsets_pinn(
                     "patch_size": patch_size,
                     "dx": dx,
                     "dy": dy,
-                    "model_type": "deepsets",
+                    "model_type": model_type,
                     "base_channels": base_channels,
                     "coord_dim": coord_embed_dim,
+                    "signal_embed_dim": signal_embed_dim,
+                    "coord_embed_dim": coord_embed_dim,
+                    "point_dim": point_dim,
+                    "tf_embed_dim": tf_embed_dim,
+                    "stft_n_fft": stft_n_fft,
+                    "stft_hop_length": stft_hop_length,
+                    "stft_win_length": stft_win_length,
+                    "stft_window": stft_window,
+                    "stft_pooling": stft_pooling,
+                    "fusion_mode": fusion_mode,
                 },
                 ckpt_path / "best_deepsets_pinn.pth",
             )
@@ -888,19 +970,27 @@ def train_deepsets_pinn(
         history, run_image("fig_deepsets_pinn_training_curves.png")
     )
     plot_deepsets_sample_results(
-        model, val_loader, device, run_image("fig_deepsets_pinn_results.png")
+        model,
+        val_loader,
+        device,
+        run_image("fig_deepsets_pinn_results.png"),
+        model_type=model_type,
     )
     run_deepsets_acoustic_validation(
         model,
         val_loader,
         device,
         run_image("fig_deepsets_pinn_acoustic_validation.png"),
+        model_type=model_type,
     )
     return model, history
 
 
 def train_from_config(config: Dict[str, object]) -> Tuple[nn.Module, Dict[str, list]]:
     pipeline = str(config.get("pipeline", "pinn")).strip().lower()
+    model_type = str(config.get("model_type", "deepsets")).strip().lower()
+    if pipeline == "pinn" and model_type != "deepsets":
+        raise ValueError("model_type is only valid for pipeline=deepsets")
     if pipeline == "pinn":
         return train_pinn(
             num_epochs=int(config.get("epochs", 50)),
@@ -945,7 +1035,7 @@ def train_from_config(config: Dict[str, object]) -> Tuple[nn.Module, Dict[str, l
             center_frequency=float(config.get("center_frequency", 250e3)),
             dx=float(config.get("dx", GRID_SPACING)),
             dy=float(config.get("dy", GRID_SPACING)),
-            model_type="deepsets",
+            model_type=str(config.get("model_type", "deepsets")),
             base_channels=int(config.get("base_channels", 16)),
             coord_dim=int(config.get("coord_dim", 64)),
             signal_embed_dim=int(config.get("signal_embed_dim", 128)),
@@ -953,6 +1043,16 @@ def train_from_config(config: Dict[str, object]) -> Tuple[nn.Module, Dict[str, l
                 config.get("coord_embed_dim", config.get("coord_dim", 64))
             ),
             point_dim=int(config.get("point_dim", 128)),
+            tf_embed_dim=int(
+                config.get("tf_embed_dim", config.get("signal_embed_dim", 128))
+            ),
+            stft_n_fft=int(config.get("stft_n_fft", 128)),
+            stft_hop_length=int(config.get("stft_hop_length", 32)),
+            stft_win_length=int(config.get("stft_win_length", 128)),
+            stft_window=str(config.get("stft_window", "hann")),
+            stft_pooling=str(config.get("stft_pooling", "mean")),
+            fusion_mode=str(config.get("fusion_mode", "gated")),
+            debug_numerics=bool(config.get("debug_numerics", False)),
         )
 
     raise ValueError(
@@ -993,6 +1093,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--signal_embed_dim", type=int, default=128)
     parser.add_argument("--coord_embed_dim", type=int, default=64)
     parser.add_argument("--point_dim", type=int, default=128)
+    parser.add_argument(
+        "--model_type", choices=["deepsets", "tf_fusion"], default="deepsets"
+    )
+    parser.add_argument("--tf_embed_dim", type=int, default=128)
+    parser.add_argument("--stft_n_fft", type=int, default=128)
+    parser.add_argument("--stft_hop_length", type=int, default=32)
+    parser.add_argument("--stft_win_length", type=int, default=128)
+    parser.add_argument("--stft_window", type=str, default="hann")
+    parser.add_argument(
+        "--stft_pooling", choices=["mean", "max", "meanmax"], default="mean"
+    )
+    parser.add_argument("--fusion_mode", choices=["gated", "concat"], default="gated")
+    parser.add_argument("--debug_numerics", action="store_true")
     parser.add_argument("--checkpoint_dir", type=str, default=str(CHECKPOINTS_DIR))
     return parser.parse_args()
 
@@ -1031,6 +1144,15 @@ def main() -> None:
         "signal_embed_dim": args.signal_embed_dim,
         "coord_embed_dim": args.coord_embed_dim,
         "point_dim": args.point_dim,
+        "model_type": args.model_type,
+        "tf_embed_dim": args.tf_embed_dim,
+        "stft_n_fft": args.stft_n_fft,
+        "stft_hop_length": args.stft_hop_length,
+        "stft_win_length": args.stft_win_length,
+        "stft_window": args.stft_window,
+        "stft_pooling": args.stft_pooling,
+        "fusion_mode": args.fusion_mode,
+        "debug_numerics": args.debug_numerics,
         "checkpoint_dir": args.checkpoint_dir,
         "save_best": True,
     }

@@ -281,6 +281,10 @@ class SignalEncoder(nn.Module):
         return self.proj(x)
 
 
+class TimeFreqEncoder(SignalEncoder):
+    """Encoder for 1D time-frequency proxy sequences."""
+
+
 class CoordinateMLP(nn.Module):
     def __init__(self, embed_dim: int = 64):
         super().__init__()
@@ -307,6 +311,50 @@ class PointEncoder(nn.Module):
         self, signal_emb: torch.Tensor, coord_emb: torch.Tensor
     ) -> torch.Tensor:
         return self.mlp(torch.cat([signal_emb, coord_emb], dim=-1))
+
+
+class GatedFeatureFusion(nn.Module):
+    """Adaptive gate that blends time and time-frequency embeddings."""
+
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Linear(embed_dim, embed_dim),
+            nn.Sigmoid(),
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, f_time: torch.Tensor, f_tf: torch.Tensor) -> torch.Tensor:
+        if f_time.shape != f_tf.shape:
+            raise ValueError(
+                f"f_time and f_tf shape mismatch: {f_time.shape} vs {f_tf.shape}"
+            )
+        gate = self.gate(torch.cat([f_time, f_tf], dim=-1))
+        fused = gate * f_time + (1.0 - gate) * f_tf
+        return self.norm(fused)
+
+
+class ConcatFeatureFusion(nn.Module):
+    """Concat + projection fusion for ablation experiments."""
+
+    def __init__(self, embed_dim: int):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Linear(embed_dim, embed_dim),
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, f_time: torch.Tensor, f_tf: torch.Tensor) -> torch.Tensor:
+        if f_time.shape != f_tf.shape:
+            raise ValueError(
+                f"f_time and f_tf shape mismatch: {f_time.shape} vs {f_tf.shape}"
+            )
+        fused = self.proj(torch.cat([f_time, f_tf], dim=-1))
+        return self.norm(fused)
 
 
 class SignalDecoder(nn.Module):
@@ -520,6 +568,110 @@ class DeepSetsPINN(nn.Module):
         residual = self.compute_wave_equation_residual(
             denoised, grid_indices, grid_cols, grid_rows
         )
+        return denoised, residual
+
+
+class DeepSetsPINN_TF(DeepSetsPINN):
+    """DeepSetsPINN variant with an additional time-frequency branch."""
+
+    def __init__(
+        self,
+        signal_embed_dim: int = 256,
+        coord_embed_dim: int = 64,
+        point_dim: int = 256,
+        base_channels: int = 32,
+        kernel_size: int = 7,
+        dropout_rate: float = 0.1,
+        wave_speed: float = DEFAULT_WAVE_SPEED,
+        center_frequency: float = CENTER_FREQUENCY,
+        dx: float = DEFAULT_DX,
+        dy: float = DEFAULT_DY,
+        patch_size: int = 5,
+        tf_embed_dim: Optional[int] = None,
+        fusion_mode: str = "gated",
+        debug_numerics: bool = False,
+    ):
+        super().__init__(
+            signal_embed_dim=signal_embed_dim,
+            coord_embed_dim=coord_embed_dim,
+            point_dim=point_dim,
+            base_channels=base_channels,
+            kernel_size=kernel_size,
+            dropout_rate=dropout_rate,
+            wave_speed=wave_speed,
+            center_frequency=center_frequency,
+            dx=dx,
+            dy=dy,
+            patch_size=patch_size,
+        )
+        resolved_tf_dim = signal_embed_dim if tf_embed_dim is None else tf_embed_dim
+        if resolved_tf_dim <= 0:
+            raise ValueError("tf_embed_dim must be positive")
+        if fusion_mode not in {"gated", "concat"}:
+            raise ValueError(f"Unsupported fusion_mode: {fusion_mode}")
+
+        self.tf_encoder = TimeFreqEncoder(
+            base_channels=base_channels,
+            kernel_size=kernel_size,
+            dropout_rate=dropout_rate,
+            embed_dim=resolved_tf_dim,
+        )
+        self.tf_project = (
+            nn.Identity()
+            if resolved_tf_dim == signal_embed_dim
+            else nn.Linear(resolved_tf_dim, signal_embed_dim)
+        )
+        if fusion_mode == "gated":
+            self.fusion = GatedFeatureFusion(embed_dim=signal_embed_dim)
+        else:
+            self.fusion = ConcatFeatureFusion(embed_dim=signal_embed_dim)
+        self.debug_numerics = debug_numerics
+
+    def _check_finite(self, name: str, x: torch.Tensor) -> None:
+        if self.debug_numerics and not torch.isfinite(x).all():
+            raise ValueError(f"{name} contains NaN or Inf")
+
+    def forward(
+        self,
+        noisy_signals: torch.Tensor,
+        tf_signals: torch.Tensor,
+        coordinates: torch.Tensor,
+    ) -> torch.Tensor:
+        if noisy_signals.shape != tf_signals.shape:
+            raise ValueError(
+                "noisy_signals and tf_signals must have the same shape, got "
+                f"{noisy_signals.shape} vs {tf_signals.shape}"
+            )
+        b, r, t = noisy_signals.shape
+        sig_emb = self.signal_encoder(noisy_signals.reshape(b * r, 1, t)).view(b, r, -1)
+        tf_emb = self.tf_encoder(tf_signals.reshape(b * r, 1, t)).view(b, r, -1)
+        tf_emb = self.tf_project(tf_emb)
+        self._check_finite("sig_emb", sig_emb)
+        self._check_finite("tf_emb", tf_emb)
+        fused_emb = self.fusion(sig_emb, tf_emb)
+        self._check_finite("fused_emb", fused_emb)
+        coord_emb = self.coord_mlp(coordinates)
+        point_feat = self.point_encoder(fused_emb, coord_emb)
+        global_feat = point_feat.mean(dim=1, keepdim=True).expand(-1, r, -1)
+        dec_input = torch.cat([point_feat, global_feat], dim=-1)
+        out = self.decoder(dec_input.reshape(b * r, -1)).view(b, r, t)
+        self._check_finite("denoised", out)
+        return out
+
+    def physics_forward(
+        self,
+        noisy_signals: torch.Tensor,
+        tf_signals: torch.Tensor,
+        coordinates: torch.Tensor,
+        grid_indices: Optional[torch.Tensor] = None,
+        grid_cols: int = 41,
+        grid_rows: int = 41,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        denoised = self.forward(noisy_signals, tf_signals, coordinates)
+        residual = self.compute_wave_equation_residual(
+            denoised, grid_indices, grid_cols, grid_rows
+        )
+        self._check_finite("residual", residual)
         return denoised, residual
 
 

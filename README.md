@@ -73,6 +73,8 @@ uv run python scripts/transformer.py \
 - `pinn`：`DeepCAE_PINN` 路径
 - `deepsets`：`DeepSetsPINN` 路径
 
+DeepSets 还支持 `model_type=tf_fusion`，在不改动原 `DeepSetsPINN` 的前提下引入离线 STFT 时频分支。
+
 ### 2.1 PINN 训练
 
 ```bash
@@ -118,6 +120,12 @@ uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path
 
 # 基础训练
 uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --epochs 100 --patch_size 5
+
+# TF-Fusion 训练（自动要求 data/train/tf 与 data/val/tf）
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --epochs 100 --model_type tf_fusion
+
+# TF-Fusion 消融（concat 融合）
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --epochs 100 --model_type tf_fusion --fusion_mode concat
 
 # 调节物理损失权重
 uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --physics_weight 1e-4
@@ -203,6 +211,13 @@ uv run python scripts/analysis/inference_deepsets.py \
   --input data/noisy.mat \
   --output results/ \
   --checkpoint results/checkpoints/best_deepsets_pinn.pth
+
+# TF-Fusion 推理
+uv run python scripts/analysis/inference_deepsets.py \
+  --input data/noisy.mat \
+  --output results/ \
+  --checkpoint results/checkpoints/best_deepsets_pinn.pth \
+  --model_type tf_fusion
 ```
 
 推理输出通常包括：

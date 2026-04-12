@@ -76,6 +76,7 @@ class DeepSetsDataset(Dataset):
         dx: float = GRID_SPACING,
         dy: float = GRID_SPACING,
         augment: bool = False,
+        use_tf: bool = False,
     ):
         super().__init__()
         self.data_dir = Path(data_dir)
@@ -87,6 +88,12 @@ class DeepSetsDataset(Dataset):
         self.dx = dx
         self.dy = dy
         self.augment = augment
+        self.use_tf = use_tf
+        if self.use_tf and self.augment:
+            print(
+                "[DeepSetsDataset] use_tf=True: disabling patch augmentation to keep noisy/tf pairs aligned"
+            )
+            self.augment = False
 
         self.n_grid = grid_cols * grid_rows  # 1681 for 41×41
 
@@ -96,7 +103,7 @@ class DeepSetsDataset(Dataset):
         # treat every consecutive n_grid block as a separate grid
         # copy, multiplying the training set size.
         # ----------------------------------------------------------
-        self.grids_noisy, self.grids_clean = self._load_all_grids()
+        self.grids_noisy, self.grids_clean, self.grids_tf = self._load_all_grids()
 
         # ----------------------------------------------------------
         # Build normalised coordinate array  (n_grid, 2)
@@ -145,29 +152,62 @@ class DeepSetsDataset(Dataset):
         This supports augmented training directories.
 
         Returns:
-            (list_of_noisy, list_of_clean)
+            (list_of_noisy, list_of_clean, list_of_tf_or_none)
             Each list element has shape (n_grid, signal_length).
         """
         noisy_dir = self.data_dir / "noisy"
         clean_dir = self.data_dir / "clean"
+        tf_dir = self.data_dir / "tf"
 
         if not noisy_dir.exists() or not clean_dir.exists():
             raise FileNotFoundError(f"Expected noisy/ and clean/ under {self.data_dir}")
+        if self.use_tf and not tf_dir.exists():
+            raise FileNotFoundError(
+                f"Expected tf/ under {self.data_dir} when use_tf=True"
+            )
 
         # Count available files
         n_files = len(list(noisy_dir.glob("*.npy")))
+        n_clean_files = len(list(clean_dir.glob("*.npy")))
+        if n_files != n_clean_files:
+            raise ValueError(
+                f"noisy/clean file count mismatch under {self.data_dir}: "
+                f"noisy={n_files}, clean={n_clean_files}"
+            )
+        if self.use_tf:
+            n_tf_files = len(list(tf_dir.glob("*.npy")))
+            if n_files != n_tf_files:
+                raise ValueError(
+                    f"noisy/tf file count mismatch under {self.data_dir}: "
+                    f"noisy={n_files}, tf={n_tf_files}"
+                )
+
         n_grids = max(1, n_files // self.n_grid)
         n_to_load = n_grids * self.n_grid
+        if n_to_load != n_files:
+            raise ValueError(
+                f"File count {n_files} in {noisy_dir} is not divisible by grid size {self.n_grid}"
+            )
 
         noisy_all = []
         clean_all = []
+        tf_all = []
         for i in range(n_to_load):
             fname = f"{i:04d}.npy"
             noisy_all.append(np.load(noisy_dir / fname))
             clean_all.append(np.load(clean_dir / fname))
+            if self.use_tf:
+                tf_all.append(np.load(tf_dir / fname))
 
         noisy_all = np.stack(noisy_all, axis=0).astype(np.float32)
         clean_all = np.stack(clean_all, axis=0).astype(np.float32)
+        if self.use_tf:
+            tf_all = np.stack(tf_all, axis=0).astype(np.float32)
+            if tf_all.shape != noisy_all.shape:
+                raise ValueError(
+                    "tf shape mismatch with noisy data: "
+                    f"{tf_all.shape} vs {noisy_all.shape}"
+                )
 
         # Split into grid-sized blocks
         grids_noisy = [
@@ -176,6 +216,11 @@ class DeepSetsDataset(Dataset):
         grids_clean = [
             clean_all[i * self.n_grid : (i + 1) * self.n_grid] for i in range(n_grids)
         ]
+        grids_tf = None
+        if self.use_tf:
+            grids_tf = [
+                tf_all[i * self.n_grid : (i + 1) * self.n_grid] for i in range(n_grids)
+            ]
 
         print(
             f"[DeepSetsDataset] Loaded {n_to_load} signals "
@@ -185,7 +230,7 @@ class DeepSetsDataset(Dataset):
             f"  Grid: {self.grid_cols}×{self.grid_rows}, "
             f"Signal length: {self.signal_length}"
         )
-        return grids_noisy, grids_clean
+        return grids_noisy, grids_clean, grids_tf
 
     # ==============================================================
     # Patch Centre Extraction
@@ -262,6 +307,9 @@ class DeepSetsDataset(Dataset):
 
         noisy = self.grids_noisy[grid_id][flat_idx].copy()
         clean = self.grids_clean[grid_id][flat_idx].copy()
+        tf_signals = None
+        if self.use_tf and self.grids_tf is not None:
+            tf_signals = self.grids_tf[grid_id][flat_idx].copy()
 
         # Patch-level augmentation (training only)
         if self.augment:
@@ -278,6 +326,8 @@ class DeepSetsDataset(Dataset):
             "coordinates": torch.from_numpy(self.coords[flat_idx]),  # (R, 2)
             "grid_indices": torch.from_numpy(self.grid_idx[flat_idx]),  # (R, 2)
         }
+        if tf_signals is not None:
+            sample["tf_signals"] = torch.from_numpy(tf_signals)
         return sample
 
 
@@ -297,6 +347,7 @@ def create_deepsets_dataloaders(
     dx: float = GRID_SPACING,
     dy: float = GRID_SPACING,
     augment: bool = True,
+    use_tf: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create training and validation DataLoaders for DeepSets.
@@ -325,6 +376,7 @@ def create_deepsets_dataloaders(
         dx=dx,
         dy=dy,
         augment=augment,
+        use_tf=use_tf,
     )
     val_ds = DeepSetsDataset(
         data_dir=f"{data_root}/val",
@@ -335,6 +387,7 @@ def create_deepsets_dataloaders(
         dx=dx,
         dy=dy,
         augment=False,  # Never augment validation
+        use_tf=use_tf,
     )
 
     # Detect if MPS — pin_memory not supported on Apple Silicon

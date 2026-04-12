@@ -143,7 +143,7 @@ def _validate_existing_file(path_str: str | None, arg_name: str) -> Path:
     return path
 
 
-def _validate_dataset_dir(data_dir: str) -> None:
+def _validate_dataset_dir(data_dir: str, require_tf: bool = False) -> None:
     """Validate transformed dataset directory structure for file-mode training."""
     root = Path(data_dir)
     if not root.exists():
@@ -157,6 +157,8 @@ def _validate_dataset_dir(data_dir: str) -> None:
         root / "val" / "noisy",
         root / "val" / "clean",
     ]
+    if require_tf:
+        required_dirs.extend([root / "train" / "tf", root / "val" / "tf"])
     missing = [str(p) for p in required_dirs if not p.exists() or not p.is_dir()]
     if missing:
         joined = "\n  - ".join(missing)
@@ -256,12 +258,25 @@ def main() -> None:
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument(
         "--model_type",
-        choices=["deepsets"],
+        choices=["deepsets", "tf_fusion"],
         default="deepsets",
         help="DeepSets pipeline model variant",
     )
     parser.add_argument("--base_channels", type=int, default=16)
     parser.add_argument("--coord_dim", type=int, default=64)
+    parser.add_argument("--signal_embed_dim", type=int, default=128)
+    parser.add_argument("--coord_embed_dim", type=int, default=64)
+    parser.add_argument("--point_dim", type=int, default=128)
+    parser.add_argument("--tf_embed_dim", type=int, default=128)
+    parser.add_argument("--stft_n_fft", type=int, default=128)
+    parser.add_argument("--stft_hop_length", type=int, default=32)
+    parser.add_argument("--stft_win_length", type=int, default=128)
+    parser.add_argument("--stft_window", type=str, default="hann")
+    parser.add_argument(
+        "--stft_pooling", choices=["mean", "max", "meanmax"], default="mean"
+    )
+    parser.add_argument("--fusion_mode", choices=["gated", "concat"], default="gated")
+    parser.add_argument("--debug_numerics", action="store_true")
 
     parser.add_argument("--wave_speed", type=float, default=5900.0)
     parser.add_argument("--center_frequency", type=float, default=250e3)
@@ -300,11 +315,19 @@ def main() -> None:
 
     _validate_existing_file(args.inference_input, "inference_input")
 
+    if args.pipeline == "pinn" and args.model_type != "deepsets":
+        raise ValueError(
+            "--model_type=tf_fusion is only valid with --pipeline deepsets"
+        )
+
     if not args.skip_transform:
         _validate_existing_file(args.noisy_mat, "noisy_mat")
         _validate_existing_file(args.clean_mat, "clean_mat")
     else:
-        _validate_dataset_dir(args.data_dir)
+        _validate_dataset_dir(
+            args.data_dir,
+            require_tf=(args.pipeline == "deepsets" and args.model_type == "tf_fusion"),
+        )
 
     results_root = Path(args.results_dir)
     run_dir, run_timestamp = _create_run_output_dir(args.results_dir)
@@ -372,6 +395,12 @@ def main() -> None:
             normalize=True,
             seed=args.seed,
             target_signal_length=args.signal_length,
+            export_tf=(args.pipeline == "deepsets" and args.model_type == "tf_fusion"),
+            stft_n_fft=args.stft_n_fft,
+            stft_hop_length=args.stft_hop_length,
+            stft_win_length=args.stft_win_length,
+            stft_window=args.stft_window,
+            stft_pooling=args.stft_pooling,
         )
     else:
         print("\n[STAGE 1/3] Data transform skipped")
@@ -406,7 +435,18 @@ def main() -> None:
                 "stride": args.stride,
                 "base_channels": args.base_channels,
                 "coord_dim": args.coord_dim,
+                "signal_embed_dim": args.signal_embed_dim,
+                "coord_embed_dim": args.coord_embed_dim,
+                "point_dim": args.point_dim,
+                "tf_embed_dim": args.tf_embed_dim,
                 "model_type": args.model_type,
+                "stft_n_fft": args.stft_n_fft,
+                "stft_hop_length": args.stft_hop_length,
+                "stft_win_length": args.stft_win_length,
+                "stft_window": args.stft_window,
+                "stft_pooling": args.stft_pooling,
+                "fusion_mode": args.fusion_mode,
+                "debug_numerics": args.debug_numerics,
             }
         )
     else:
@@ -453,8 +493,16 @@ def main() -> None:
             target_cols=inference_target_cols,
             target_rows=inference_target_rows,
             patch_size=args.patch_size,
+            model_type=args.model_type,
+            fusion_mode=args.fusion_mode,
+            debug_numerics=args.debug_numerics,
             interpolation_method=args.interp_method,
             target_signal_length=args.signal_length,
+            stft_n_fft=args.stft_n_fft,
+            stft_hop_length=args.stft_hop_length,
+            stft_win_length=args.stft_win_length,
+            stft_window=args.stft_window,
+            stft_pooling=args.stft_pooling,
             validation_save_path=val_fig,
         )
 

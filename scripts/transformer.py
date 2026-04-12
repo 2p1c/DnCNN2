@@ -23,6 +23,8 @@ from scipy import interpolate
 from pathlib import Path
 from typing import Tuple
 
+from data.tf_features import build_and_save_tf_split
+
 
 def load_mat_file(filepath: str) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -145,7 +147,9 @@ def interpolate_spatial(
         print(
             f"[INFO] Interpolating from {n_cols_small}x{n_rows_small} to {target_cols}x{target_rows} using '{method}' method..."
         )
-        print("[INFO] Source and target grid sizes are identical; skipping interpolation.")
+        print(
+            "[INFO] Source and target grid sizes are identical; skipping interpolation."
+        )
         grid_large = grid_small.astype(np.float64, copy=True)
         print(f"  Interpolation complete. Output shape: {grid_large.shape}")
         return grid_large
@@ -565,6 +569,12 @@ def transform_data(
     normalize: bool = True,
     seed: int = 42,
     target_signal_length: int = 1000,
+    export_tf: bool = False,
+    stft_n_fft: int = 128,
+    stft_hop_length: int = 32,
+    stft_win_length: int = 128,
+    stft_window: str = "hann",
+    stft_pooling: str = "mean",
 ) -> None:
     """
     Main transformation pipeline.
@@ -673,6 +683,32 @@ def transform_data(
         noisy_aug, clean_aug, output_dir, train_ratio=train_ratio, normalize=normalize
     )
 
+    if export_tf:
+        print("\n[Step 7] Building offline TF features...")
+        output_root = Path(output_dir)
+        n_train_tf = build_and_save_tf_split(
+            split_root=output_root / "train",
+            signal_length=target_signal_length,
+            n_fft=stft_n_fft,
+            hop_length=stft_hop_length,
+            win_length=stft_win_length,
+            window=stft_window,
+            pooling=stft_pooling,
+        )
+        n_val_tf = build_and_save_tf_split(
+            split_root=output_root / "val",
+            signal_length=target_signal_length,
+            n_fft=stft_n_fft,
+            hop_length=stft_hop_length,
+            win_length=stft_win_length,
+            window=stft_window,
+            pooling=stft_pooling,
+        )
+        print(
+            f"  TF features saved: train={n_train_tf} files, val={n_val_tf} files "
+            f"(pooling={stft_pooling}, n_fft={stft_n_fft})"
+        )
+
     print("\n" + "=" * 60)
     print("Transformation Complete!")
     print("=" * 60)
@@ -741,6 +777,21 @@ def main():
         help="Target signal length (truncate if longer)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--export_tf",
+        action="store_true",
+        help="Also export offline STFT-based tf features to train/tf and val/tf",
+    )
+    parser.add_argument("--stft_n_fft", type=int, default=128)
+    parser.add_argument("--stft_hop_length", type=int, default=32)
+    parser.add_argument("--stft_win_length", type=int, default=128)
+    parser.add_argument("--stft_window", type=str, default="hann")
+    parser.add_argument(
+        "--stft_pooling",
+        type=str,
+        default="mean",
+        choices=["mean", "max", "meanmax"],
+    )
 
     args = parser.parse_args()
 
@@ -756,6 +807,12 @@ def main():
         normalize=not args.no_normalize,
         seed=args.seed,
         target_signal_length=args.signal_length,
+        export_tf=args.export_tf,
+        stft_n_fft=args.stft_n_fft,
+        stft_hop_length=args.stft_hop_length,
+        stft_win_length=args.stft_win_length,
+        stft_window=args.stft_window,
+        stft_pooling=args.stft_pooling,
     )
 
 
