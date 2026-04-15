@@ -1,90 +1,53 @@
 # AGENTS.md for DnCNN2
 
-High-signal guidance for coding agents in this repo.
+## Scope
+- Python package: `ultrasonic-cae` (`requires-python >=3.10`), managed with `uv`.
+- Active pipelines are only `pinn` and `deepsets` (see `README.md` and `scripts/train/train.py`).
+- Main wiring points: `scripts/run_unified_pipeline.py` (orchestration), `scripts/train/train.py` (training), `scripts/analysis/inference.py` and `scripts/analysis/inference_deepsets.py` (inference), `model/model.py` (models).
 
-## Scope and Stack
+## Instruction Precedence
+- Follow: `CLAUDE.md`, `.github/copilot-instructions.md`, `copilot-instructions.md`.
+- Those files include generic web-dev guidance; for this repo prefer the Python/ML workflow and executable scripts.
 
-- Python project `ultrasonic-cae` (`requires-python >=3.10`), managed with `uv`.
-- Domain: ultrasonic 1D denoising with 2 active pipelines: `pinn` and `deepsets`.
-- Core entrypoints:
-  - Unified flow: `scripts/run_unified_pipeline.py`
-  - Training only: `scripts/train/train.py`
-  - Inference only: `scripts/analysis/inference.py`, `scripts/analysis/inference_deepsets.py`
-  - Data transform: `scripts/transformer.py`
-  - Models: `model/model.py`
+## Setup and Commands
+- Install deps: `uv sync`
+- Install dev extras: `uv sync --group dev`
+- Run scripts from repo root: `uv run python <script>.py ...`
 
-## Instruction Sources To Respect
+## High-Value Verification
+- No lint/typecheck/pytest config is defined; use script-level validation.
+- Recommended checks:
+  - `uv run python -m compileall .`
+  - `uv run python scripts/analysis/acoustic_validation.py`
+  - `uv run python scripts/analysis/preview_signals.py --detailed --no_show`
+  - `uv build`
 
-- Keep and follow: `CLAUDE.md`, `.github/copilot-instructions.md`, `copilot-instructions.md`.
-- These emphasize understanding-first, no guessing on ambiguous intent, and maintainable incremental edits.
-- Ignore generic web-dev advice in those files when it conflicts with this Python/ML repo.
+## Focused Sanity Checks
+- PINN synthetic smoke: `uv run python scripts/train/train.py --pipeline pinn --epochs 1 --num_train 64 --num_val 16`
+- PINN file-mode smoke: `uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data --epochs 1`
+- Single inference smoke: `uv run python scripts/analysis/inference.py --input data/noisy.mat --output results/`
+- End-to-end skip smoke:
+  - `uv run python scripts/run_unified_pipeline.py --pipeline pinn --inference_input data/noisy.mat --skip_transform --skip_train --checkpoint results/checkpoints/best_pinn_model.pth`
 
-## Setup and Canonical Commands
-
-```bash
-uv sync
-uv sync --group dev
-```
-
-Run scripts from repo root with:
-
-```bash
-uv run python <script>.py [args]
-```
-
-Recommended verification (no dedicated linter/pytest config exists yet):
-
-```bash
-uv run python -m compileall .
-uv run python scripts/analysis/acoustic_validation.py
-uv run python scripts/analysis/preview_signals.py --detailed --no_show
-uv build
-```
-
-## Focused Checks ("Single Test" Equivalents)
-
-```bash
-# Fast synthetic sanity training
-uv run python scripts/train/train.py --pipeline pinn --epochs 1 --num_train 64 --num_val 16
-
-# File-mode training sanity
-uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data --epochs 1
-
-# Single-path inference sanity
-uv run python scripts/analysis/inference.py --input data/noisy.mat --output results/
-
-# Pipeline inference using existing data/checkpoint
-uv run python scripts/run_unified_pipeline.py \
-  --pipeline pinn --inference_input data/noisy.mat --skip_transform --skip_train \
-  --checkpoint results/checkpoints/best_pinn_model.pth
-```
-
-## Workflow and CLI Gotchas
-
-- `run_unified_pipeline.py` always requires `--inference_input` (or in JSON config), even when training.
-- When `--skip_transform` is set, `--data_dir` must already contain:
-  `train/noisy`, `train/clean`, `val/noisy`, `val/clean`.
-- `physics_weight` default is pipeline-specific when omitted:
+## Workflow Gotchas
+- `scripts/run_unified_pipeline.py` requires `--inference_input` even if training is the main goal.
+- `--skip_transform` requires prebuilt dataset layout under `data_dir`: `train/noisy`, `train/clean`, `val/noisy`, `val/clean`.
+- If `physics_weight` is omitted, defaults are pipeline-specific:
   - `pinn`: `1e-3`
   - `deepsets`: `1e-4`
-- `scripts/analysis/inference.py` enforces `--signal_length == 1000` and raises on mismatch.
-- Device selection is explicit in train/inference scripts: prefer `cuda`, then `mps`, then `cpu`; keep this behavior.
+- `scripts/analysis/inference.py` hard-checks `--signal_length == 1000`.
+- Device priority in train/inference is explicit: `cuda` > `mps` > `cpu`.
+- Unified pipeline writes checkpoints into `results/<timestamp>/checkpoints` for fresh runs, but when `--skip_train` (and no `--checkpoint`) it looks for checkpoint in root `results/checkpoints/`.
 
-## Data, Outputs, and Artifacts
+## Artifacts and CI Reality
+- Generated data/artifacts are typically untracked (`data/`, `results/`, `*.pth`, `uv.lock` are gitignored).
+- `.github/workflows/ci.yml` deploys MkDocs; it is not a test/lint gate for training/inference code.
 
-- Unified pipeline creates timestamped run folders under `results/<timestamp>/` with:
-  - `checkpoints/`
-  - `images/`
-  - optional `experiments/` markdown records (`--log_experiment`)
-- By default `.gitignore` excludes large/generated artifacts (`data/`, `results/`, checkpoints like `*.pth`, and `uv.lock`).
-  Do not assume these paths are tracked in git.
-
-## Coding Conventions To Preserve
-
-- Keep changes minimal and local; avoid unrelated refactors.
-- Preserve script-style import bootstrapping (`sys.path.append(...)`) unless you are doing a deliberate import-structure migration.
-- Validate paths/shape assumptions early and fail with explicit errors.
-- Keep canonical signal constants aligned with model defaults unless explicitly changing physics assumptions:
+## Code Conventions To Preserve
+- Keep edits minimal/local; avoid unrelated refactors.
+- Preserve current script import style (`sys.path.append(...)`) unless intentionally migrating import structure.
+- Keep early, explicit validation for file paths and tensor/signal shape assumptions.
+- Keep core signal constants aligned unless physics assumptions are intentionally changed:
   - sampling rate `6.25e6`
   - duration `160e-6`
   - points `1000`

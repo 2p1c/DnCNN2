@@ -37,6 +37,7 @@ from scripts.transformer import (
     truncate_signals,
 )
 from scripts.analysis.acoustic_validation import run_inference_validation
+from scripts.train.visualization import plot_inference_comparison
 
 
 RESULTS_DIR = Path("results")
@@ -520,6 +521,18 @@ def run_inference(
         },
     )
     print(f"\n[INFO] Saved denoised data to: {out_file}")
+
+    # Generate inference comparison figure
+    comparison_fig = str(image_dir / "fig_inferenced.png")
+    # Use normalized signals for consistent scale in visualization
+    plot_inference_comparison(
+        original_signals=normalised,
+        inferred_signals=denoised_norm,
+        save_path=comparison_fig,
+        num_samples=6,
+        random_seed=42,
+    )
+    print(f"[INFO] Saved inference comparison figure to: {comparison_fig}")
 
     # Optionally reverse interpolation
     if metadata.get("interpolated", False):

@@ -1,0 +1,60 @@
+{
+  "pipeline": "deepsets",
+  "noisy_mat": "/Volumes/ESD-ISO/数据/260324/TPS/complete/1/41_41_AvgOff/data.mat",
+  "clean_mat": "/Volumes/ESD-ISO/数据/260324/TPS/complete/1/41_41_Avg10/data.mat",
+  "inference_input": "/Volumes/ESD-ISO/数据/260407/liewen_200k_600k_41_41/AvgOff/data.mat",
+
+  "data_dir": "data",
+  "results_dir": "results",
+  "checkpoint": null,
+
+  "skip_transform": false,
+  "skip_train": false,
+
+  "input_cols": 41,
+  "input_rows": 41,
+  "target_cols": 41,
+  "target_rows": 41,
+  "inference_input_cols": 41,
+  "inference_input_rows": 41,
+  "inference_target_cols": 41,
+  "inference_target_rows": 41,
+  "signal_length": 1000,
+  "interp_method": "cubic",
+  "augment_factor": 10,
+  "train_ratio": 0.8,
+
+  "epochs": 80,
+  "batch_size": 32,
+  "lr": 0.0005,
+  "seed": 42,
+  "patience": 50,
+  "min_epochs": 30,
+  "dropout": 0.15,
+  "physics_weight": 0.001,
+
+  "patch_size": 5,
+  "stride": 1,
+  "model_type": "tf_fusion",
+  "base_channels": 16,
+  "coord_dim": 64,
+  "signal_embed_dim": 128,
+  "coord_embed_dim": 64,
+  "point_dim": 128,
+  "tf_embed_dim": 128,
+  "fusion_mode": "gated",
+  "debug_numerics": false,
+
+  "stft_n_fft": 128,
+  "stft_hop_length": 32,
+  "stft_win_length": 128,
+  "stft_window": "hann",
+  "stft_pooling": "mean",
+
+  "wave_speed": 5900.0,
+  "center_frequency": 250000.0,
+  "damping_ratio": 0.05,
+
+  "inference_batch_size": 64,
+  "validation_samples": 20
+}
