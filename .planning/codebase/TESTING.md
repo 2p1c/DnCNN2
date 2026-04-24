@@ -1,69 +1,173 @@
-# Testing
+# Testing Patterns
 
-## Test Infrastructure Status
+**Analysis Date:** 2026-04-24
 
-**No formal test framework detected.** The project has zero test files.
+## Testing Framework
 
-## Validation Approach
+**Framework:** No formal test framework (pytest) configured
+**Status:** Per `AGENTS.md`: "No lint/typecheck/pytest config is defined; use script-level validation"
 
-Validation is performed through ad-hoc scripts rather than automated tests:
+**Verification instead of testing:**
+- Script-level validation through executable smoke tests
+- Acoustic feature validation through `acoustic_validation.py`
+- Signal preview through `preview_signals.py`
 
-### Acoustic Validation
+## Validation Scripts
 
+### Acoustic Validation (`scripts/analysis/acoustic_validation.py`)
+
+**Purpose:** Comprehensive acoustic feature validation for training and inference
+
+**Training Mode:**
+```python
+run_acoustic_validation(model, val_loader, device, save_path, num_samples)
+```
+
+**Inference Mode:**
+```python
+run_inference_validation(input_signals, denoised_signals, save_path, num_samples)
+```
+
+**Features Extracted:**
+- Time domain: arrival time, peak amplitude, RMS, crest factor, zero-crossing rate
+- Frequency domain: spectral centroid, bandwidth, dominant frequency, -3dB bandwidth
+- Energy: total energy, sub-band energy distribution (0-100k, 100k-200k, 200k-400k, >400k)
+- Wavenumber: phase linearity, dominant wavenumber, spectral energy concentration
+- Quality metrics: cross-correlation, spectral coherence, envelope correlation
+
+**Usage (standalone):**
 ```bash
 uv run python scripts/analysis/acoustic_validation.py
 ```
 
-Validates acoustic physics properties of denoised signals.
+### Preview Signals (`scripts/analysis/preview_signals.py`)
 
-### Signal Preview
+**Purpose:** Visual preview of signals with detailed analysis
 
+**Usage:**
 ```bash
 uv run python scripts/analysis/preview_signals.py --detailed --no_show
 ```
 
-Visual inspection of signal quality.
+### Inference (`scripts/analysis/inference.py`)
 
-### RRMSE Metric
+**Purpose:** Model inference on .mat files with acoustic validation
 
-Both inference scripts (`inference.py`, `inference_deepsets.py`) compute Relative Root Mean Square Error (RRMSE) as the primary quantitative metric:
-
-```python
-rrmse = torch.sqrt(torch.mean((denoised - clean) ** 2)) / torch.sqrt(torch.mean(clean ** 2))
+**Usage:**
+```bash
+uv run python scripts/analysis/inference.py --input data/noisy.mat --output results/ --checkpoint <path>
 ```
 
-## CI Pipeline
+## Smoke Tests
 
-`.github/workflows/ci.yml` only deploys documentation via MkDocs:
+**Defined in `AGENTS.md`:**
 
+**PINN synthetic smoke:**
+```bash
+uv run python scripts/train/train.py --pipeline pinn --epochs 1 --num_train 64 --num_val 16
+```
+
+**PINN file-mode smoke:**
+```bash
+uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data --epochs 1
+```
+
+**DeepSets file-mode smoke:**
+```bash
+uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --epochs 1 --batch_size 8
+```
+
+**Single inference smoke:**
+```bash
+uv run python scripts/analysis/inference.py --input data/noisy.mat --output results/
+```
+
+**End-to-end skip smoke:**
+```bash
+uv run python scripts/run_unified_pipeline.py --pipeline pinn --inference_input data/noisy.mat --skip_transform --skip_train --checkpoint results/checkpoints/best_pinn_model.pth
+```
+
+## Verification Commands
+
+**From `CLAUDE.md`:**
+```bash
+uv run python -m compileall .
+uv run python scripts/analysis/acoustic_validation.py
+uv run python scripts/analysis/preview_signals.py --detailed --no_show
+uv build
+```
+
+**Execution pattern:** All scripts run via `uv run python <script>.py`
+
+## CI Configuration
+
+**File:** `.github/workflows/ci.yml`
+
+**Purpose:** MkDocs documentation deployment (NOT a test/lint gate)
 ```yaml
-- uses: actions/checkout@v4
-- uses: ./.github/actions/setup
-- run: mkdocs gh-deploy --force
+name: ci
+on:
+  push:
+    branches:
+      - develop
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+      - run: pip install mkdocs-material
+      - run: mkdocs gh-deploy --force
 ```
 
-No test execution in CI.
+**Note:** CI does NOT run training, inference, or validation tests. It only deploys documentation.
 
-## Coverage Gaps
+## Coverage
 
-| Area | Status |
-|------|--------|
-| Model forward pass | No tests |
-| Physics residual computation | No tests |
-| Data loading | No tests |
-| Data augmentation | Manual only |
-| PINNLoss | No tests |
-| DeepSetsPINNLoss | No tests |
-| CoordinateMLP | No tests |
-| GridEncoder | No tests |
-| Training loop | Manual only |
-| Inference | Manual only |
+**Enforcement:** None
+**Approach:** Script-level validation and smoke tests instead of unit test coverage
 
-## Recommendations
+## Test Organization
 
-1. Add pytest with `pytest-cov` for unit testing
-2. Test physics residual computations against known analytical solutions
-3. Test model output shape consistency
-4. Test data loading and train/val split correctness
-5. Add integration tests for full pipeline execution
-6. Configure CI to run tests on push
+**Location:** No formal test directory
+**Pattern:** Tests are embedded in validation scripts or run as standalone smoke tests
+
+**Data for testing:**
+- Synthetic data generated on-the-fly via `data/data_utils.py`
+- File-based data from `.mat` files in `data/` directory
+
+## Model Validation Metrics
+
+**PSNR (Peak Signal-to-Noise Ratio):**
+```python
+def calculate_psnr(clean, denoised, max_val=1.0):
+    mse = torch.mean((clean - denoised) ** 2).item()
+    return 10 * np.log10(max_val**2 / mse)
+```
+
+**SNR (Signal-to-Noise Ratio):**
+```python
+def calculate_snr(signal, noise):
+    signal_power = torch.mean(signal**2).item()
+    noise_power = torch.mean(noise**2).item()
+    return 10 * np.log10(signal_power / noise_power)
+```
+
+**Acoustic Quality Thresholds:**
+- Good cross-correlation: >= 0.9
+- Fair cross-correlation: >= 0.7
+- Good spectral coherence (100-500kHz): >= 0.8
+- Good arrival time error: <= 2.0 us
+- Feature preservation target: >= 80%
+
+## No Formal Test Files
+
+**Note:** There are no `test_*.py` or `*_test.py` files in this codebase. All validation is performed through:
+1. Executable scripts (`scripts/analysis/`)
+2. Smoke tests (documented in `AGENTS.md`)
+3. Build verification (`uv build`)
+
+---
+
+*Testing analysis: 2026-04-24*

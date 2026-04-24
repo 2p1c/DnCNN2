@@ -1,101 +1,151 @@
 # Architecture
 
-## Design Patterns
+**Analysis Date:** 2026-04-24
 
-### Two Parallel Pipeline Architecture
+## Pattern Overview
 
-The project implements two distinct denoising pipelines with shared components:
+**Overall:** Physics-informed neural network (PINN) for ultrasonic signal denoising
 
-1. **PINN Pipeline** (`pinn`): DeepCAE with Physics-Informed Neural Network constraints
-2. **DeepSets Pipeline** (`deepsets`): DeepSets-PINN architecture
+**Key Characteristics:**
+- Two independent pipelines: `pinn` (DeepCAE) and `deepsets` (DeepSets)
+- Physics constraints enforced via wave equation residuals
+- Set-invariant architecture for spatial grid data
+- Optional time-frequency fusion branch for enhanced denoising
 
-Both pipelines share:
-- Data loading and preprocessing (`data/data_utils.py`, `data/data_deepsets.py`)
-- Inference infrastructure (`scripts/analysis/inference.py`, `scripts/analysis/inference_deepsets.py`)
-- Unified pipeline orchestrator (`scripts/run_unified_pipeline.py`)
+## Layers
 
-### Encoder-Decoder Architecture
+**Model Definition:**
+- Purpose: Define neural network architectures for signal denoising
+- Location: `model/model.py`
+- Contains: `DeepCAE`, `DeepCAE_PINN`, `DeepSetsPINN`, `DeepSetsPINN_TF`, encoders, decoders, fusion modules
+- Depends on: PyTorch (torch.nn)
 
-All models follow a symmetric encoder-decoder structure:
+**Data Loading:**
+- Purpose: Load and prepare training/inference data
+- Location: `data/data_utils.py`, `data/data_deepsets.py`, `data/tf_features.py`
+- Contains: `UltrasonicDataset`, `DeepSetsDataset`, dataloader factories
+- Depends on: NumPy, PyTorch DataLoader
 
-```
-Input (1000 points)
-    ↓
-Encoder (conv layers, decreasing width)
-    ↓
-Bottleneck
-    ↓
-Decoder (deconv layers, increasing width)
-    ↓
-Output (1000 points)
-```
+**Training:**
+- Purpose: Train models with physics-informed loss functions
+- Location: `scripts/train/train.py`
+- Contains: `train_pinn()`, `train_deepsets_pinn()`, loss classes, training loops
+- Depends on: model, data utilities, visualization
 
-### Physics-Informed Loss
+**Inference:**
+- Purpose: Apply trained models to new data
+- Location: `scripts/analysis/inference.py`, `scripts/analysis/inference_deepsets.py`
+- Contains: Model loading, preprocessing, denoising, denormalization, saving
+- Depends on: model, transformer utilities, acoustic validation
 
-Both pipelines enforce physics constraints via custom loss functions:
+## Data Flow
 
-- **PINN** (`scripts/train/train.py:148-158`): 1D damped wave equation residual
-- **DeepSets** (`scripts/train/train.py:160-175`): 2D wave equation residual
+**Pipeline: pinn**
 
-### Data Flow
+1. Load noisy (21x21) and clean (41x41) .mat files via `scripts/transformer.py`
+2. Interpolate noisy grid to match clean grid resolution (cubic/linear)
+3. Augment data (time_shift, amplitude_scale, flip, add_noise, time_stretch, window_crop)
+4. Split into train/val sets, save as .npy files
+5. Load data via `UltrasonicDataset` in `data/data_utils.py`
+6. Train `DeepCAE_PINN` with combined MSE + physics residual loss
+7. Run inference via `scripts/analysis/inference.py`
 
-```
-.mat files (noisy/clean)
-    ↓
-scripts/transformer.py
-    ↓
-data/{train,val}/{noisy,clean}/ directories
-    ↓
-data/data_utils.py / data/data_deepsets.py (PyTorch datasets)
-    ↓
-scripts/train/train.py (training loop)
-    ↓
-checkpoints/*.pth
-    ↓
-scripts/analysis/inference.py / inference_deepsets.py
-    ↓
-.mat output files
-```
+**Pipeline: deepsets**
 
-## Model Architectures
+1. Same transformer steps as pinn
+2. Additionally compute STFT-based time-frequency features (when `model_type=tf_fusion`)
+3. Load data via `DeepSetsDataset` which organizes 41x41 grid as patches with coordinates
+4. Train `DeepSetsPINN` or `DeepSetsPINN_TF` with 2D wave equation residual
+5. Run inference via `scripts/analysis/inference_deepsets.py`
 
-### DeepCAE (base model)
+**Unified Pipeline:**
+- Entry: `scripts/run_unified_pipeline.py`
+- Orchestrates: transform -> train -> inference in one command
+- Supports both `pinn` and `deepsets` pipelines
 
-- 6 convolutional blocks (encoder)
-- 6 deconvolutional blocks (decoder)
-- Batch normalization and LeakyReLU
-- Skip connections between corresponding encoder/decoder layers
+## Key Abstractions
 
-### DeepCAE_PINN
+**DeepCAE (Convolutional Autoencoder):**
+- Purpose: Baseline 1D signal denoising autoencoder
+- Examples: `model/model.py` lines 21-156
+- Pattern: 5-layer encoder with stride-2 convs, 5-layer decoder with transposed convs
 
-- Inherits DeepCAE architecture
-- Adds coordinate encoding MLP for physics residual computation
-- PINN loss computed on equally-spaced grid points
+**DeepCAE_PINN:**
+- Purpose: Physics-informed DeepCAE with damped narrowband residual
+- Examples: `model/model.py` lines 159-210
+- Pattern: Extends DeepCAE, adds `physics_forward()` computing wave equation residual
+- Physics: Damped harmonic oscillator equation at 250 kHz center frequency
 
-### DeepSetsPINN
+**DeepSetsPINN:**
+- Purpose: Set-invariant model operating on spatial grid patches
+- Examples: `model/model.py` lines 446-571
+- Pattern: SignalEncoder -> PointEncoder with coordinates -> Decoder
+- Physics: 2D wave equation residual computed over patch neighborhood
 
-- Point-wise MLP encoding (shared weights across signal positions)
-- Aggregation via set function (max pooling)
-- Grid-wise MLP decoding
-- 2D wave equation physics residual (on 2D grid of signal × coordinate)
+**DeepSetsPINN_TF:**
+- Purpose: DeepSetsPINN with additional time-frequency fusion branch
+- Examples: `model/model.py` lines 574-675
+- Pattern: Dual encoder (time + time-frequency) with GatedFeatureFusion or ConcatFeatureFusion
+- Fusion modes: `gated` (adaptive weighted blend) or `concat` (projected concatenation)
 
-## Key Design Decisions
+**SignalEncoder / TimeFreqEncoder:**
+- Purpose: Encode 1D signals into embedding space
+- Examples: `model/model.py` lines 213-282
+- Pattern: 5-layer 1D CNN with adaptive average pooling + linear projection
 
-| Decision | Rationale |
-|----------|-----------|
-| 1000 fixed signal length | Enforces consistent tensor shapes across all operations |
-| Separate train/val split | Default 80/20 split in transformer.py |
-| Physics weight defaults (PINN=1e-3, DeepSets=1e-4) | Empirical tuning, DeepSets needs lower weight due to aggregation |
-| Device priority: cuda > mps > cpu | GPU acceleration when available |
+**GatedFeatureFusion / ConcatFeatureFusion:**
+- Purpose: Combine time and time-frequency embeddings
+- Examples: `model/model.py` lines 316-357
+- Pattern: GatedFeatureFusion uses sigmoid gate to adaptively weight f_time vs f_tf
 
-## Layer Responsibilities
+## Entry Points
 
-| Layer | Purpose |
-|-------|---------|
-| `scripts/transformer.py` | .mat → directory structure conversion |
-| `data/data_utils.py` | PINN dataset (1D signal loading, augmentation) |
-| `data/data_deepsets.py` | DeepSets dataset (2D grid construction) |
-| `scripts/train/train.py` | Unified training loop, loss computation, checkpointing |
-| `model/model.py` | DeepCAE, DeepCAE_PINN, DeepSetsPINN definitions |
-| `scripts/analysis/inference.py` | PINN inference with RRMSE metric |
-| `scripts/analysis/inference_deepsets.py` | DeepSets inference with batch processing |
+**Training:**
+- Location: `scripts/train/train.py`
+- Triggers: Direct script execution or called by `run_unified_pipeline.py`
+- Responsibilities: Model initialization, training loop, checkpointing, visualization
+
+**Unified Pipeline:**
+- Location: `scripts/run_unified_pipeline.py`
+- Triggers: `uv run python scripts/run_unified_pipeline.py --config configs/...`
+- Responsibilities: Orchestrate all stages (transform, train, inference)
+
+**Data Transformation:**
+- Location: `scripts/transformer.py`
+- Triggers: Called by unified pipeline or direct execution
+- Responsibilities: Load .mat files, interpolate, augment, save dataset
+
+**Inference:**
+- Location: `scripts/analysis/inference.py` (pinn), `scripts/analysis/inference_deepsets.py` (deepsets)
+- Triggers: Called by unified pipeline or direct execution
+- Responsibilities: Load checkpoint, preprocess, denoise, save results
+
+## Error Handling
+
+**Strategy:** Exceptions with informative messages, graceful degradation where possible
+
+**Patterns:**
+- Checkpoint loading validates model_type mismatch
+- Interpolation handles identical source/target sizes as no-op
+- Tiny signal amplitude triggers automatic linear interpolation fallback
+- Edge points with no patch prediction fall back to input signal
+
+## Cross-Cutting Concerns
+
+**Logging:** Print statements with `[INFO]`, `[Step N]` prefixes; training metrics logged with `[TRAIN_METRIC]` prefix
+
+**Validation:** Acoustic validation runs after training (arrival time, peak amplitude, RMS, frequency preservation)
+
+**Device Priority:** CUDA > MPS > CPU (automatic selection in `_select_device()`)
+
+**Physics Constants:**
+- Sampling Rate: 6.25 MHz
+- Duration: 160 us
+- Points: 1000
+- Center Frequency: 250 kHz
+- Wave Speed: 5900 m/s (steel)
+- Grid Spacing: 1 mm
+
+---
+
+*Architecture analysis: 2026-04-24*

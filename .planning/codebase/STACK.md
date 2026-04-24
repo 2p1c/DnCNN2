@@ -1,95 +1,89 @@
 # Technology Stack
 
-**Analysis Date:** 2026-04-12
+**Analysis Date:** 2026-04-24
 
 ## Languages
 
 **Primary:**
-- Python >= 3.10 - All model training, data processing, and inference code
+- Python 3.10+ - Core implementation language for all ML and signal processing tasks
 
-## Runtime
+## Runtime & Package Manager
 
 **Environment:**
-- Python 3.12 (via `.venv` virtual environment)
+- Python 3.10+ (requires >=3.10 per `pyproject.toml`)
+- Virtual environment: `.venv/` (managed via `uv`)
 
 **Package Manager:**
-- uv >= 0.5.0 (configured in `pyproject.toml`)
-- Lockfile: `uv.lock` present
+- `uv` - Primary package manager (per CLAUDE.md setup instructions)
+- Lockfile: `uv.lock` (present in project root)
 
-## Frameworks
+## Frameworks & Libraries
 
-**Core:**
-- PyTorch >= 2.0.0 - Neural network framework for `DeepCAE`, `DeepCAE_PINN`, `DeepSetsPINN` models
-- torch.nn - Neural network modules (Conv1d, ConvTranspose1d, BatchNorm1d, etc.)
+**Deep Learning:**
+- PyTorch >=2.0.0 - Neural network framework (`torch>=2.0.0`)
+- No explicit CUDA version pinned; device priority: cuda > mps > cpu (per CLAUDE.md)
 
 **Scientific Computing:**
-- numpy >= 1.24.0, < 2.0.0 - Array operations, signal data handling
-- scipy >= 1.10.0 - Signal processing (`scipy.signal`), file I/O (`scipy.io`), interpolation
+- NumPy 1.24.0-2.0.0 - Array operations (`numpy>=1.24.0,<2.0.0`)
+- SciPy >=1.10.0 - Signal processing, interpolation (`scipy>=1.10.0`)
+- PyWavelets >=1.5.0 - Wavelet transforms (`PyWavelets>=1.5.0`)
 
 **Visualization:**
-- matplotlib >= 3.7.0 - Training plots, signal visualization
+- Matplotlib >=3.7.0 - Plotting and visualization (`matplotlib>=3.7.0`)
 
-**Progress Tracking:**
-- tqdm >= 4.65.0 - Training progress bars
+**GUI:**
+- PySide6 >=6.6.0 - Qt-based GUI framework (`PySide6>=6.6.0`) (used for train_gui.py and rms_imaging_gui.py)
 
-**Configuration:**
-- pyyaml - Pipeline configuration parsing (JSON templates)
+**Data & Config:**
+- PyYAML - YAML config parsing (`pyyaml`)
+- tqdm >=4.65.0 - Progress bars (`tqdm>=4.65.0`)
 
-## Build System
-
-- hatchling - Package build backend defined in `pyproject.toml`
-- Package name: `ultrasonic-cae` v0.1.0
-
-## Key Dependencies
-
-**Critical (from `pyproject.toml`):**
-- `torch>=2.0.0` - Core ML framework
-- `numpy>=1.24.0,<2.0.0` - Array operations
-- `matplotlib>=3.7.0` - Visualization
-- `scipy>=1.10.0` - Scientific computing, .mat file handling
-- `tqdm>=4.65.0` - Progress bars
-- `pyyaml` - Config file parsing
+**Build:**
+- hatchling - Build backend (`hatchling.build`)
 
 **Dev Dependencies:**
-- `ipython>=8.0.0` - Interactive Python shell
+- ipython >=8.0.0 - Interactive Python shell
 
 ## Project Structure
 
-```
-ultrasonic-cae/
-├── model/model.py          # Model definitions (DeepCAE, DeepCAE_PINN, DeepSetsPINN)
-├── data/                  # Dataset utilities and dataloaders
-│   ├── data_utils.py      # UltrasonicDataset, create_dataloaders
-│   └── data_deepsets.py   # DeepSets-specific dataset builder
-├── scripts/
-│   ├── train/train.py     # Unified training entry point
-│   ├── transformer.py     # .mat to train/val directory conversion
-│   ├── analysis/          # Inference and validation scripts
-│   └── run_unified_pipeline.py  # End-to-end pipeline orchestrator
-├── configs/               # JSON pipeline configuration templates
-└── results/               # Training outputs (checkpoints, images)
-```
+**Key Source Directories:**
+- `model/` - Neural network model definitions (`DeepCAE`, `DeepCAE_PINN`, `DeepSetsPINN`)
+- `scripts/` - Training, inference, data transformation scripts
+  - `scripts/train/` - Training pipeline (`train.py`, `train_gui.py`)
+  - `scripts/analysis/` - Inference and validation (`inference.py`, `inference_deepsets.py`, `acoustic_validation.py`)
+  - `scripts/matlab/` - MATLAB integration for imaging
+- `data/` - Data directory (train/val structure populated by transformer.py)
+- `configs/` - JSON pipeline configuration templates
+- `results/` - Training outputs (checkpoints/, images/)
 
-## Device Support
+## GPU/Acceleration
 
-Priority order (from `scripts/train/train.py`):
+**Device Priority:**
 1. CUDA (NVIDIA GPU)
 2. MPS (Apple Silicon GPU)
 3. CPU (fallback)
 
-## Configuration
+**Implementation:** `torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')`
 
-**Pipeline Configs:**
-- `configs/pipeline_pinn_template.json` - PINN pipeline parameters
-- `configs/pipeline_deepsets_template.json` - DeepSets-PINN pipeline parameters
+## Physics Constants
 
-**Physics Constants (hardcoded in `model/model.py`):**
+Defined in `model/model.py`:
 - Sampling Rate: 6.25 MHz
 - Duration: 160 us
 - Points: 1000
 - Center Frequency: 250 kHz
 - Wave Speed: 5900 m/s (steel)
+- Grid Spacing: 1e-3 m (DX, DY)
+
+## Configuration
+
+**Pipeline Configuration:**
+- JSON templates in `configs/` directory
+- Key configs: `pipeline_pinn_template.json`, `pipeline_deepsets_template.json`, `pipeline_tf_fusion_template.json`
+
+**Environment Variables:**
+- Not extensively used; configuration passed via JSON configs and CLI arguments
 
 ---
 
-*Stack analysis: 2026-04-12*
+*Stack analysis: 2026-04-24*

@@ -1,72 +1,109 @@
 # External Integrations
 
-**Analysis Date:** 2026-04-12
+**Analysis Date:** 2026-04-24
 
-## Data Input
+## Data File Formats
 
-**File-Based Data Sources:**
-- `.mat` files (MATLAB format) - Experimental ultrasonic signal data
-  - Noisy signals: 21x21 grid (`data/noisy.mat`)
-  - Clean signals: 41x41 grid (`data/clean.mat`)
-  - Loaded via `scipy.io.loadmat()` in `scripts/transformer.py`
+**Input (.mat files):**
+- MATLAB binary format loaded via `scipy.io.loadmat()`
+- Noisy signals: 21x21 grid stored as `data/noisy.mat`
+- Clean signals: 41x41 grid stored as `data/clean.mat`
+- Loaded by `scripts/transformer.py` using `scipy.io.loadmat(filepath)`
 
-**Data Processing:**
-- Spatial interpolation from 21x21 to 41x41 grid using `scipy.interpolate`
-- Supported methods: `cubic` (default), `linear`
+**Input Variables in .mat files:**
+- `x` - Time vector (extracted via `mat_data["x"].flatten()`)
+- `y` - Signal data array of shape (n_points, signal_length)
 
-## Output Storage
-
-**Local Filesystem Only:**
-- Checkpoints: `results/<timestamp>/checkpoints/`
-- Training images: `results/<timestamp>/images/`
-- Inference results: `results/<timestamp>/` (`.mat` files)
+**Output Data Format:**
+- NumPy `.npy` files saved by `scripts/transformer.py`
+- Directory structure: `data/{train,val}/{noisy,clean}/0000.npy`
+- Metadata saved to `data/metadata.npy`
 
 ## External Services
 
-**None detected:**
-- No cloud storage (S3, GCS, etc.)
-- No external APIs (REST, GraphQL)
-- No database connections (PostgreSQL, MongoDB, etc.)
-- No message queues (Redis, RabbitMQ, etc.)
-- No experiment tracking services (Weights & Biases, MLflow, etc.)
+**No external API integrations detected:**
+- No cloud storage services
+- No external ML model APIs
+- No remote data sources
 
-## Authentication
+**Training is fully local:**
+- Models train entirely on local hardware
+- Checkpoints saved to local `results/<timestamp>/checkpoints/` directory
 
-**Not applicable:**
-- No external services requiring authentication
-- No API keys or tokens in configuration
+## Hardware Integrations
 
-## Compute Infrastructure
+**Ultrasonic NDT Scanning System (indirect):**
+- Input .mat files originate from ultrasonic scanning equipment
+- Grid sizes (21x21 noisy, 41x41 clean) reflect scanning probe configuration
+- Scanning parameters embedded in physics constants:
+  - Wave Speed: 5900 m/s (steel)
+  - Center Frequency: 250 kHz
+  - Sampling Rate: 6.25 MHz
+  - Grid Spacing: 1e-3 m
 
-**Local compute only:**
-- GPU acceleration via CUDA (NVIDIA) or MPS (Apple Silicon)
-- CPU fallback when GPU unavailable
+**GPU Acceleration:**
+- CUDA (NVIDIA) - preferred if available
+- MPS (Apple Silicon M-series) - fallback on Mac
+- CPU - final fallback
 
-## Dependencies
+## Internal Pipeline Integrations
 
-**File I/O:**
-- `scipy.io` - MATLAB `.mat` file reading
+**Data Transform Pipeline:**
+```
+scripts/transformer.py
+  - Input: data/noisy.mat, data/clean.mat
+  - Output: data/train/{noisy,clean}/, data/val/{noisy,clean}/
+  - Optional TF features: data/{train,val}/tf/
+```
 
-**No external package integrations:**
-- No huggingface_hub or model zoo
-- No external dataset repositories
-- No pre-trained weights from external sources
+**Training Pipeline:**
+```
+scripts/train/train.py
+  - Input: data/ directory (from transformer)
+  - Config: configs/pipeline_*.json
+  - Output: results/<timestamp>/checkpoints/
+```
+
+**Inference Pipeline:**
+```
+scripts/analysis/inference.py (PINN)
+scripts/analysis/inference_deepsets.py (DeepSets)
+  - Input: data/*.mat or processed signals
+  - Checkpoint: results/<timestamp>/checkpoints/best_model.pth
+  - Output: results/<timestamp>/images/
+```
+
+**Unified Pipeline:**
+```
+scripts/run_unified_pipeline.py
+  - Orchestrates: transformer -> train -> inference
+  - Config: configs/pipeline_*.json
+```
+
+## Configuration Files
+
+**Pipeline Configs (JSON):**
+- `configs/pipeline_pinn_template.json` - PINN pipeline config
+- `configs/pipeline_deepsets_template.json` - DeepSets pipeline config
+- `configs/pipeline_tf_fusion_template.json` - TF-fusion pipeline config
+- `configs/pipeline_tf_fusion.json` - Active TF-fusion config (modified on branch)
+
+**Architecture Specs (JSON):**
+- `tf_fusion_arch.json`, `tf_fusion_architecture.json` - TF fusion architecture definitions
+- `gated_fusion_detail.json` - Gated fusion architecture details
 
 ## Environment Configuration
 
-**Environment variables (from `.gitignore` patterns):**
-- `.env` - Not present (no external service configuration needed)
-- No secret management required
+**No explicit environment variables required:**
+- All configuration via JSON config files and CLI arguments
+- Device selection automatic (cuda > mps > cpu)
+- Paths are relative or specified at runtime
 
-**Python path manipulation:**
-- `scripts/train/train.py` adds project root to `sys.path` for imports
-
-## CI/CD
-
-**Not detected:**
-- No GitHub Actions workflows in `.github/` (workflows directory may exist but no pipeline configuration observed)
-- No external CI/CD services
+**Data paths are hardcoded defaults:**
+- `data/noisy.mat`, `data/clean.mat` - Default input locations
+- `data/` - Default output directory for transformed data
+- `results/` - Default directory for training outputs
 
 ---
 
-*Integration audit: 2026-04-12*
+*Integration audit: 2026-04-24*
