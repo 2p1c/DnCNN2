@@ -25,6 +25,7 @@
 ## Focused Sanity Checks
 - PINN synthetic smoke: `uv run python scripts/train/train.py --pipeline pinn --epochs 1 --num_train 64 --num_val 16`
 - PINN file-mode smoke: `uv run python scripts/train/train.py --pipeline pinn --mode file --data_path data --epochs 1`
+- DeepSets file-mode smoke: `uv run python scripts/train/train.py --pipeline deepsets --mode file --data_path data --epochs 1 --batch_size 8`
 - Single inference smoke: `uv run python scripts/analysis/inference.py --input data/noisy.mat --output results/`
 - End-to-end skip smoke:
   - `uv run python scripts/run_unified_pipeline.py --pipeline pinn --inference_input data/noisy.mat --skip_transform --skip_train --checkpoint results/checkpoints/best_pinn_model.pth`
@@ -38,6 +39,7 @@
 - `scripts/analysis/inference.py` hard-checks `--signal_length == 1000`.
 - Device priority in train/inference is explicit: `cuda` > `mps` > `cpu`.
 - Unified pipeline writes checkpoints into `results/<timestamp>/checkpoints` for fresh runs, but when `--skip_train` (and no `--checkpoint`) it looks for checkpoint in root `results/checkpoints/`.
+- DeepSets TF-Fusion mode (`--model_type tf_fusion`) requires pre-computed STFT data in `data/train/tf` and `data/val/tf`.
 
 ## Artifacts and CI Reality
 - Generated data/artifacts are typically untracked (`data/`, `results/`, `*.pth`, `uv.lock` are gitignored).
@@ -52,3 +54,9 @@
   - duration `160e-6`
   - points `1000`
   - center frequency `250e3`
+
+## Config Templates
+- `configs/pipeline_pinn_template.json` - PINN pipeline template
+- `configs/pipeline_deepsets_template.json` - DeepSets pipeline template
+- `configs/pipeline_tf_fusion_template.json` - TF-Fusion pipeline template
+- `configs/ablation_exp_*.json` - Ablation experiment configs (A_baseline, B_concat_fusion, C_low_physics)

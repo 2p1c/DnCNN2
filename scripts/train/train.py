@@ -160,19 +160,8 @@ class PINNLoss(nn.Module):
         return total, data_loss, physics_loss
 
 
-class DeepSetsPINNLoss(nn.Module):
-    def __init__(self, physics_weight: float = 0.001):
-        super().__init__()
-        self.data_loss_fn = nn.MSELoss()
-        self.physics_weight = physics_weight
-
-    def forward(
-        self, denoised: torch.Tensor, clean: torch.Tensor, residual: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        data_loss = self.data_loss_fn(denoised, clean)
-        physics_loss = torch.mean(residual**2)
-        total = data_loss + self.physics_weight * physics_loss
-        return total, data_loss, physics_loss
+# Alias for DeepSets-PINN; the loss computation is identical
+DeepSetsPINNLoss = PINNLoss
 
 
 def train_epoch_pinn(
@@ -605,6 +594,30 @@ def _select_device() -> torch.device:
     return torch.device("cpu")
 
 
+def _load_checkpoint_for_resume(
+    checkpoint_path: str,
+    model: nn.Module,
+    optimizer: optim.Optimizer | None,
+    device: torch.device,
+) -> int:
+    """Load model and optimizer state from a checkpoint for resuming training.
+
+    Returns the epoch to resume from (1-indexed).
+    """
+    resume_path = Path(checkpoint_path)
+    if not resume_path.exists():
+        raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+    ckpt = torch.load(resume_path, map_location=device, weights_only=False)
+    if not isinstance(ckpt, dict) or "model_state_dict" not in ckpt:
+        raise ValueError(f"Invalid resume checkpoint format: {resume_path}")
+    model.load_state_dict(ckpt["model_state_dict"])
+    if optimizer is not None and "optimizer_state_dict" in ckpt:
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    start_epoch = int(ckpt.get("epoch", 0)) + 1
+    print(f"[INFO] Resumed training from {resume_path} at epoch {start_epoch}")
+    return start_epoch
+
+
 def train_pinn(
     num_epochs: int = 50,
     batch_size: int = 32,
@@ -624,6 +637,7 @@ def train_pinn(
     wave_speed: float = 5900.0,
     center_frequency: float = 250e3,
     damping_ratio: float = 0.05,
+    resume_checkpoint: str | None = None,
 ) -> Tuple[nn.Module, Dict[str, list]]:
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -664,6 +678,17 @@ def train_pinn(
         optimizer, T_0=25, T_mult=2, eta_min=1e-6
     )
 
+    start_epoch = 1
+    if resume_checkpoint:
+        start_epoch = _load_checkpoint_for_resume(
+            resume_checkpoint, model, optimizer, device
+        )
+
+    if start_epoch > num_epochs:
+        raise ValueError(
+            f"resume_checkpoint epoch exceeds target epochs: start_epoch={start_epoch}, num_epochs={num_epochs}"
+        )
+
     checkpoint_path = Path(checkpoint_dir)
     checkpoint_path.mkdir(parents=True, exist_ok=True)
     image_dir = _resolve_image_dir(checkpoint_dir)
@@ -685,7 +710,7 @@ def train_pinn(
     best_val_psnr = -float("inf")
     early_counter = 0
 
-    pbar = tqdm(range(1, num_epochs + 1), desc="PINN Training", unit="epoch")
+    pbar = tqdm(range(start_epoch, num_epochs + 1), desc="PINN Training", unit="epoch")
     for epoch in pbar:
         tr_total, tr_data, tr_phys, tr_psnr = train_epoch_pinn(
             model, train_loader, criterion, optimizer, device
@@ -694,6 +719,7 @@ def train_pinn(
             model, val_loader, criterion, device
         )
         scheduler.step(epoch)
+        current_lr = float(optimizer.param_groups[0]["lr"])
 
         history["train_total_loss"].append(tr_total)
         history["train_data_loss"].append(tr_data)
@@ -710,6 +736,13 @@ def train_pinn(
                 "phys": f"{tr_phys:.2e}",
                 "val_psnr": f"{va_psnr:.2f}dB",
             }
+        )
+        print(
+            "[TRAIN_METRIC] "
+            f"pipeline=pinn epoch={epoch} "
+            f"train_total={tr_total:.8e} train_data={tr_data:.8e} train_physics={tr_phys:.8e} train_psnr={tr_psnr:.8e} "
+            f"val_total={va_total:.8e} val_data={va_data:.8e} val_physics={va_phys:.8e} val_psnr={va_psnr:.8e} "
+            f"lr={current_lr:.8e}"
         )
 
         if save_best and va_psnr > best_val_psnr:
@@ -799,8 +832,8 @@ def train_deepsets_pinn(
     stft_pooling: str = "mean",
     fusion_mode: str = "gated",
     debug_numerics: bool = False,
+    resume_checkpoint: str | None = None,
 ) -> Tuple[nn.Module, Dict[str, list]]:
-    del coord_dim
     torch.manual_seed(seed)
     np.random.seed(seed)
     device = _select_device()
@@ -859,6 +892,17 @@ def train_deepsets_pinn(
         optimizer, T_max=num_epochs, eta_min=1e-6
     )
 
+    start_epoch = 1
+    if resume_checkpoint:
+        start_epoch = _load_checkpoint_for_resume(
+            resume_checkpoint, model, optimizer, device
+        )
+
+    if start_epoch > num_epochs:
+        raise ValueError(
+            f"resume_checkpoint epoch exceeds target epochs: start_epoch={start_epoch}, num_epochs={num_epochs}"
+        )
+
     ckpt_path = Path(checkpoint_dir)
     ckpt_path.mkdir(parents=True, exist_ok=True)
     image_dir = _resolve_image_dir(checkpoint_dir)
@@ -882,7 +926,9 @@ def train_deepsets_pinn(
 
     best_val_psnr = -float("inf")
     early_counter = 0
-    pbar = tqdm(range(1, num_epochs + 1), desc="DeepSets PINN Training", unit="epoch")
+    pbar = tqdm(
+        range(start_epoch, num_epochs + 1), desc="DeepSets PINN Training", unit="epoch"
+    )
     for epoch in pbar:
         tr_total, tr_data, tr_phys, tr_psnr = train_epoch_deepsets(
             model,
@@ -904,6 +950,7 @@ def train_deepsets_pinn(
             model_type,
         )
         scheduler.step(epoch)
+        current_lr = float(optimizer.param_groups[0]["lr"])
 
         history["train_total_loss"].append(tr_total)
         history["train_data_loss"].append(tr_data)
@@ -919,6 +966,13 @@ def train_deepsets_pinn(
                 "phys": f"{tr_phys:.2e}",
                 "val_psnr": f"{va_psnr:.2f}dB",
             }
+        )
+        print(
+            "[TRAIN_METRIC] "
+            f"pipeline=deepsets epoch={epoch} "
+            f"train_total={tr_total:.8e} train_data={tr_data:.8e} train_physics={tr_phys:.8e} train_psnr={tr_psnr:.8e} "
+            f"val_total={va_total:.8e} val_data={va_data:.8e} val_physics={va_phys:.8e} val_psnr={va_psnr:.8e} "
+            f"lr={current_lr:.8e}"
         )
 
         if save_best and va_psnr > best_val_psnr:
@@ -1011,6 +1065,11 @@ def train_from_config(config: Dict[str, object]) -> Tuple[nn.Module, Dict[str, l
             wave_speed=float(config.get("wave_speed", 5900.0)),
             center_frequency=float(config.get("center_frequency", 250e3)),
             damping_ratio=float(config.get("damping_ratio", 0.05)),
+            resume_checkpoint=(
+                str(config.get("resume_checkpoint"))
+                if config.get("resume_checkpoint")
+                else None
+            ),
         )
 
     if pipeline == "deepsets":
@@ -1053,6 +1112,11 @@ def train_from_config(config: Dict[str, object]) -> Tuple[nn.Module, Dict[str, l
             stft_pooling=str(config.get("stft_pooling", "mean")),
             fusion_mode=str(config.get("fusion_mode", "gated")),
             debug_numerics=bool(config.get("debug_numerics", False)),
+            resume_checkpoint=(
+                str(config.get("resume_checkpoint"))
+                if config.get("resume_checkpoint")
+                else None
+            ),
         )
 
     raise ValueError(
@@ -1107,6 +1171,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--fusion_mode", choices=["gated", "concat"], default="gated")
     parser.add_argument("--debug_numerics", action="store_true")
     parser.add_argument("--checkpoint_dir", type=str, default=str(CHECKPOINTS_DIR))
+    parser.add_argument(
+        "--resume_checkpoint",
+        type=str,
+        default=None,
+        help="Resume training from an existing checkpoint",
+    )
     return parser.parse_args()
 
 
@@ -1154,6 +1224,7 @@ def main() -> None:
         "fusion_mode": args.fusion_mode,
         "debug_numerics": args.debug_numerics,
         "checkpoint_dir": args.checkpoint_dir,
+        "resume_checkpoint": args.resume_checkpoint,
         "save_best": True,
     }
     train_from_config(config)

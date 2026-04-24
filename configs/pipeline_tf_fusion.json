@@ -1,7 +1,7 @@
 {
   "pipeline": "deepsets",
-  "noisy_mat": "/Volumes/ESD-ISO/数据/260324/TPS/complete/1/41_41_AvgOff/data.mat",
-  "clean_mat": "/Volumes/ESD-ISO/数据/260324/TPS/complete/1/41_41_Avg10/data.mat",
+  "noisy_mat": "/Volumes/ESD-ISO/数据/260324/AL_plate/DeepSets_PINN/complete/1/1_41_41_180k_620k_AvgOff/1/data.mat",
+  "clean_mat": "/Volumes/ESD-ISO/数据/260324/AL_plate/DeepSets_PINN/complete/1/1_41_41_180k_620k_Avg10/1/data.mat",
   "inference_input": "/Volumes/ESD-ISO/数据/260407/liewen_200k_600k_41_41/AvgOff/data.mat",
 
   "data_dir": "data",

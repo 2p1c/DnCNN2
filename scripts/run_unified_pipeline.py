@@ -74,9 +74,9 @@ def _write_experiment_record(
     timestamp: str,
     args: argparse.Namespace,
     physics_weight: float,
-    checkpoint_path: str,
-    output_mat: str,
-    validation_figure: str,
+    checkpoint_path: str | None,
+    output_mat: str | None,
+    validation_figure: str | None,
 ) -> Path:
     """Write one experiment markdown report."""
     experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -100,9 +100,9 @@ def _write_experiment_record(
         f"- Clean mat: `{args.clean_mat}`\n"
         f"- Inference input: `{args.inference_input}`\n\n"
         f"## Outputs\n"
-        f"- Checkpoint: `{checkpoint_path}`\n"
-        f"- Denoised mat: `{output_mat}`\n"
-        f"- Acoustic validation figure: `{validation_figure}`\n\n"
+        f"- Checkpoint: `{checkpoint_path if checkpoint_path else 'N/A (inference skipped)'}`\n"
+        f"- Denoised mat: `{output_mat if output_mat else 'N/A (inference skipped)'}`\n"
+        f"- Acoustic validation figure: `{validation_figure if validation_figure else 'N/A (inference skipped)'}`\n\n"
         f"## Full Runtime Config\n"
         "```json\n"
         f"{json.dumps(args_dict, indent=2)}\n"
@@ -208,9 +208,16 @@ def main() -> None:
     parser.add_argument(
         "--checkpoint", type=str, default=None, help="Override checkpoint path"
     )
+    parser.add_argument(
+        "--resume_checkpoint",
+        type=str,
+        default=None,
+        help="Resume training from an existing checkpoint",
+    )
 
     parser.add_argument("--skip_transform", action="store_true")
     parser.add_argument("--skip_train", action="store_true")
+    parser.add_argument("--skip_inference", action="store_true")
 
     parser.add_argument("--input_cols", type=int, default=21)
     parser.add_argument("--input_rows", type=int, default=21)
@@ -308,12 +315,12 @@ def main() -> None:
 
     args = parser.parse_args(remaining_argv)
 
-    if not args.inference_input:
-        raise ValueError(
-            "--inference_input is required (can also be provided in --config JSON)"
-        )
-
-    _validate_existing_file(args.inference_input, "inference_input")
+    if not args.skip_inference:
+        if not args.inference_input:
+            raise ValueError(
+                "--inference_input is required unless --skip_inference is enabled"
+            )
+        _validate_existing_file(args.inference_input, "inference_input")
 
     if args.pipeline == "pinn" and args.model_type != "deepsets":
         raise ValueError(
@@ -379,6 +386,7 @@ def main() -> None:
         f"inference_grid={inference_input_cols}x{inference_input_rows} "
         f"-> {inference_target_cols}x{inference_target_rows}"
     )
+    print(f"[CONFIG] skip_inference={args.skip_inference}")
     print(f"[CONFIG] signal_length={args.signal_length}, interp={args.interp_method}")
 
     if not args.skip_transform:
@@ -447,73 +455,83 @@ def main() -> None:
                 "stft_pooling": args.stft_pooling,
                 "fusion_mode": args.fusion_mode,
                 "debug_numerics": args.debug_numerics,
+                "resume_checkpoint": args.resume_checkpoint,
             }
         )
     else:
         print("\n[STAGE 2/3] Model training skipped")
 
-    checkpoint_name = (
-        "best_pinn_model.pth" if args.pipeline == "pinn" else "best_deepsets_pinn.pth"
-    )
-    if args.checkpoint:
-        checkpoint_path = args.checkpoint
-    elif args.skip_train:
-        checkpoint_path = str(results_root / "checkpoints" / checkpoint_name)
-    else:
-        checkpoint_path = str(checkpoints_dir / checkpoint_name)
+    checkpoint_path: str | None = None
+    output_mat: str | None = None
+    val_fig: str | None = None
 
-    _validate_existing_file(checkpoint_path, "checkpoint")
+    if not args.skip_inference:
+        checkpoint_name = (
+            "best_pinn_model.pth"
+            if args.pipeline == "pinn"
+            else "best_deepsets_pinn.pth"
+        )
+        if args.checkpoint:
+            checkpoint_path = args.checkpoint
+        elif args.skip_train:
+            checkpoint_path = str(results_root / "checkpoints" / checkpoint_name)
+        else:
+            checkpoint_path = str(checkpoints_dir / checkpoint_name)
 
-    print("\n[STAGE 3/3] Inference")
-    if args.pipeline == "pinn":
-        val_fig = str(images_dir / f"acoustic_validation_{run_timestamp}.png")
-        output_mat = run_pinn_inference(
-            input_path=args.inference_input,
-            output_path=str(run_dir),
-            checkpoint_path=checkpoint_path,
-            model_type="deep",
-            grid_cols=inference_input_cols,
-            grid_rows=inference_input_rows,
-            target_cols=inference_target_cols,
-            target_rows=inference_target_rows,
-            interpolation_method=args.interp_method,
-            batch_size=args.inference_batch_size,
-            save_original_size=True,
-            target_signal_length=args.signal_length,
-            validation_save_path=val_fig,
-        )
+        _validate_existing_file(checkpoint_path, "checkpoint")
+
+        print("\n[STAGE 3/3] Inference")
+        if args.pipeline == "pinn":
+            val_fig = str(images_dir / f"acoustic_validation_{run_timestamp}.png")
+            output_mat = run_pinn_inference(
+                input_path=args.inference_input,
+                output_path=str(run_dir),
+                checkpoint_path=checkpoint_path,
+                model_type="deep",
+                grid_cols=inference_input_cols,
+                grid_rows=inference_input_rows,
+                target_cols=inference_target_cols,
+                target_rows=inference_target_rows,
+                interpolation_method=args.interp_method,
+                batch_size=args.inference_batch_size,
+                save_original_size=True,
+                target_signal_length=args.signal_length,
+                validation_save_path=val_fig,
+            )
+        else:
+            val_fig = str(images_dir / f"acoustic_validation_deepsets_{run_timestamp}.png")
+            output_mat = run_deepsets_inference(
+                input_path=args.inference_input,
+                output_path=str(run_dir),
+                checkpoint_path=checkpoint_path,
+                grid_cols=inference_input_cols,
+                grid_rows=inference_input_rows,
+                target_cols=inference_target_cols,
+                target_rows=inference_target_rows,
+                patch_size=args.patch_size,
+                model_type=args.model_type,
+                fusion_mode=args.fusion_mode,
+                debug_numerics=args.debug_numerics,
+                interpolation_method=args.interp_method,
+                target_signal_length=args.signal_length,
+                stft_n_fft=args.stft_n_fft,
+                stft_hop_length=args.stft_hop_length,
+                stft_win_length=args.stft_win_length,
+                stft_window=args.stft_window,
+                stft_pooling=args.stft_pooling,
+                validation_save_path=val_fig,
+            )
     else:
-        val_fig = str(images_dir / f"acoustic_validation_deepsets_{run_timestamp}.png")
-        output_mat = run_deepsets_inference(
-            input_path=args.inference_input,
-            output_path=str(run_dir),
-            checkpoint_path=checkpoint_path,
-            grid_cols=inference_input_cols,
-            grid_rows=inference_input_rows,
-            target_cols=inference_target_cols,
-            target_rows=inference_target_rows,
-            patch_size=args.patch_size,
-            model_type=args.model_type,
-            fusion_mode=args.fusion_mode,
-            debug_numerics=args.debug_numerics,
-            interpolation_method=args.interp_method,
-            target_signal_length=args.signal_length,
-            stft_n_fft=args.stft_n_fft,
-            stft_hop_length=args.stft_hop_length,
-            stft_win_length=args.stft_win_length,
-            stft_window=args.stft_window,
-            stft_pooling=args.stft_pooling,
-            validation_save_path=val_fig,
-        )
+        print("\n[STAGE 3/3] Inference skipped")
 
     ts = run_timestamp
 
     print("\n" + "=" * 70)
     print("Pipeline finished successfully")
     print("=" * 70)
-    print(f"[RESULT] checkpoint: {checkpoint_path}")
-    print(f"[RESULT] denoised mat: {output_mat}")
-    print(f"[RESULT] acoustic validation figure: {val_fig}")
+    print(f"[RESULT] checkpoint: {checkpoint_path if checkpoint_path else 'N/A'}")
+    print(f"[RESULT] denoised mat: {output_mat if output_mat else 'N/A'}")
+    print(f"[RESULT] acoustic validation figure: {val_fig if val_fig else 'N/A'}")
     print(f"[RESULT] run directory: {run_dir}")
 
     if args.log_experiment:
@@ -524,7 +542,7 @@ def main() -> None:
             physics_weight=physics_weight,
             checkpoint_path=checkpoint_path,
             output_mat=output_mat,
-            validation_figure=str(val_fig),
+            validation_figure=val_fig,
         )
         print(f"[RESULT] experiment record: {record_path}")
 
