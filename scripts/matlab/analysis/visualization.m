@@ -5,7 +5,7 @@ clear; clc; close all;
 
 %% 数据预处理：加载并重塑蛇形扫描数据
 % 加载原始数据
-load('/Users/zyt/ANW/DnCNN2/results/20260413_154346/deepsets_denoised_20260413_154402.mat'); % 包含变量 x (1×2500) 和 y (961×2500)
+load('/Users/zyt/ANW/DnCNN2/results/20260421_230858/denoised_20260421_230900_full.mat'); % 包含变量 x (1×2500) 和 y (961×2500)
 
 % 计算采样率和时间向量
 data_time = x; % 时间向量
@@ -14,10 +14,9 @@ n_cols = 41; % 列数
 n_rows = 41; % 行数
 
 % 设置点阵参数
-n_points = 41; % 41×41 点阵
 spacing = 1e-3; % 物理间距 1mm = 0.001m
-data_x = (0:n_points-1) * spacing; % x方向坐标 (m)
-data_y = (0:n_points-1) * spacing; % y方向坐标 (m)
+data_x = (0:n_cols-1) * spacing; % x方向坐标 (m)
+data_y = (0:n_rows-1) * spacing; % y方向坐标 (m)
 
 % 将蛇形扫描数据重塑为 n_cols×n_rows×length(data_time)
 data_xyt = zeros(n_cols, n_rows, length(data_time));
@@ -26,12 +25,12 @@ for col = 1:n_cols
     start_idx = (col-1) * n_rows + 1;
     end_idx = col * n_rows;
     col_data = y(start_idx:end_idx, :);
-    
+
     % 蛇形扫描校正：翻转偶数列
     if mod(col, 2) == 0
         % col_data = flipud(col_data);
     end
-    
+
     % 存储到三维数组中: data_xyt(x, y, t)
     data_xyt(col, :, :) = col_data;
 end
@@ -45,7 +44,7 @@ fprintf('  数据形状: %s\n', mat2str(size(data_xyt)));
 %% 噪声处理流水线 (新增：时域预处理)
 fprintf('\n正在进行去噪预处理 (针对 3D 波场数据)...\n');
 % 设置预处理参数
-center_freq_viz = 200e3; 
+center_freq_viz = 200e3;
 bandwidth_viz = 200e3;
 wavelet_name_viz = 'sym4';
 wavelet_level_viz = 3;
@@ -105,12 +104,12 @@ for i = 1:num_sample_points
 end
 
 % 计算平均值作为颜色范围
-% color_min = mean(min_values);
-% color_max = mean(max_values);
+color_min = mean(min_values);
+color_max = mean(max_values);
 
 %手动设置颜色范围（可选）
-color_min = -4e-12;
-color_max = 1e-11;
+% color_min = -4e-12;
+% color_max = 1e-11;
 
 % 使用对称范围
 color_range = max(abs(color_min), abs(color_max));
@@ -138,41 +137,41 @@ for frame_idx = start_frame:frame_skip:end_frame
         fprintf('\n动画窗口已关闭，停止播放。\n');
         break;
     end
-    
+
     % 提取当前时刻的波场数据 (n_cols × n_rows)
     wavefield = squeeze(data_xyt(:, :, frame_idx));
-    
+
     % 4倍线性插值
     [X_orig, Y_orig] = meshgrid(data_x, data_y);
     interp_factor = 4;
     x_interp = linspace(data_x(1), data_x(end), n_cols * interp_factor - (interp_factor - 1));
     y_interp = linspace(data_y(1), data_y(end), n_rows * interp_factor - (interp_factor - 1));
     [X_interp, Y_interp] = meshgrid(x_interp, y_interp);
-    
+
     % 注意：wavefield 是 [n_cols, n_rows]，需要转置匹配 meshgrid
     wavefield_interp = interp2(X_orig, Y_orig, wavefield', X_interp, Y_interp, 'linear');
-    
+
     % 显示插值后的波场
     imagesc(x_interp * 1e3, y_interp * 1e3, wavefield_interp);
     axis equal tight;
     colormap('jet');
     colorbar;
     caxis(clim_range);  % 使用固定的颜色范围
-    
+
     % 添加标签和标题
     xlabel('X 位置 (mm)', 'FontSize', 12);
     ylabel('Y 位置 (mm)', 'FontSize', 12);
     title(sprintf('波场传播 | 时间: %.2f μs | 帧: %d/%d', ...
                   data_time(frame_idx)*1e6, frame_idx, length(data_time)), ...
           'FontSize', 14, 'FontWeight', 'bold');
-    
+
     % 添加网格
     grid on;
     set(gca, 'YDir', 'normal');  % 确保Y轴方向正确
-    
+
     % 更新显示
     drawnow;
-    
+
     % 延迟控制帧率
     pause(frame_delay);
 end
@@ -184,7 +183,7 @@ fprintf('动画播放完成！\n');
 % video_writer = VideoWriter('wavefield_animation.avi');
 % video_writer.FrameRate = 1/frame_delay;
 % open(video_writer);
-% 
+
 % for frame_idx = start_frame:frame_skip:end_frame
 %     wavefield = squeeze(data_xyt(:, :, frame_idx));
 %     imagesc(data_x * 1e3, data_y * 1e3, wavefield');
@@ -198,10 +197,10 @@ fprintf('动画播放完成！\n');
 %           'FontSize', 14);
 %     grid on;
 %     set(gca, 'YDir', 'normal');
-%     
+
 %     frame = getframe(gcf);
 %     writeVideo(video_writer, frame);
 % end
-% 
+
 % close(video_writer);
 % fprintf('视频已保存为 wavefield_animation.avi\n');

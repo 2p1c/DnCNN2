@@ -7,21 +7,21 @@ clear; clc; close all;
 % 所有可调参数集中在此处,方便修改
 
 % 数据文件路径
-data_file = '/Users/zyt/ANW/DnCNN2/results/20260409_152817/denoised_20260409_152821_full.mat';
+data_file = '/Volumes/ESD-ISO/数据/260324/AL_plate/DeepSets_PINN/complete/1/1_41_41_180k_620k_Avg10/1/data.mat';
 
 % 点阵参数
 n_points = [41, 41];     % 点阵大小: 标量(正方形) 或 [n_x, n_y](矩形)
 spacing = 1e-3;          % 物理间距 (m), 1mm
 
 % 带通滤波器参数
-center_freq = 400e3;     % 中心频率 (Hz)
-bandwidth = 400e3;        % 带宽 (Hz)
+center_freq = 250e3;     % 中心频率 (Hz)
+bandwidth = 100e3;        % 带宽 (Hz)
 filter_order = 2;        % 滤波器阶数
 
 % 小波去噪参数
 wavelet_name = 'coif3';    % 小波基: 'db4', 'sym4', 'coif3'
 wavelet_level = 3;       % 分解层数
-threshold_method = 'soft'; % 阈值方法: 'soft' 或 'hard'
+threshold_method = 'hard'; % 阈值方法: 'soft' 或 'hard'
 
 % 异常值处理参数
 edge_margin = 2;         % 排除边缘点的层数
@@ -39,15 +39,15 @@ interp_factor = 4;       % 插值倍数 (用于提高显示分辨率)
 binarization_enable = true;          % 是否启用二值化处理
 binarization_method = 'fixed';  % 阈值方法: 'percentile'(百分位数) | 'fixed'(归一化固定值)
 binarization_percentile = 95;        % 百分位数阈值 (0~100), 仅 method='percentile' 时有效
-binarization_fixed_threshold = 0.80;  % 归一化固定阈值 (0~1), 仅 method='fixed' 时有效
+binarization_fixed_threshold = 0.75;  % 归一化固定阈值 (0~1), 仅 method='fixed' 时有效
 binarization_show_overlay = true;    % 是否在二值化图上叠加原图作为背景参考
 
 % 衰减补偿参数
 enable_attenuation_compensation = true;  % 是否启用衰减补偿
 attenuation_method = 'spatial';          % 补偿方法: 'spatial'(基于空间), 'temporal'(基于时间), 'combined'(混合)
-attenuation_coefficient = 0.01;          % 衰减系数 (1/mm 或 1/μs, 根据方法而定)
-source_position = [20, 41] * 1e-3;       % 波源位置 [x, y] (米), 默认在Y轴下方中心
-min_compensation_distance = 1e-3;       % 最小补偿距离 (米), 小于此距离的区域增益为1（不补偿）
+attenuation_coefficient = 0.005;          % 衰减系数 (1/mm 或 1/μs, 根据方法而定)
+source_position = [20, 40] * 1e-3;       % 波源位置 [x, y] (米), 默认在Y轴下方中心
+min_compensation_distance = 10e-3;       % 最小补偿距离 (米), 小于此距离的区域增益为1（不补偿）
 
 % 时间段选择参数
 enable_time_window = true;               % 是否启用时间段截取
