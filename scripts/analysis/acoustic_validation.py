@@ -29,30 +29,10 @@ import matplotlib.pyplot as plt
 from scipy import signal as scipy_signal
 from typing import Dict, Tuple, Optional
 
+from model.model import SAMPLING_RATE, NUM_POINTS, DURATION, CENTER_FREQUENCY as CENTER_FREQ
+from scripts._shared import IMAGES_DIR, image_path, ensure_parent_dir
 
-RESULTS_DIR = Path("results")
-IMAGES_DIR = RESULTS_DIR / "images"
-
-
-def _image_path(filename: str) -> str:
-    """Build a default image output path under results/images."""
-    return str(IMAGES_DIR / filename)
-
-
-def _ensure_parent_dir(path: str) -> None:
-    """Create parent directory for an output file path if needed."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-
-# ============================================================
-# 物理常数 (与 data_utils.py 一致)
-# ============================================================
-SAMPLING_RATE: float = 6.25e6  # 6.25 MHz
-NUM_POINTS: int = 1000  # 每个信号的采样点数
-DURATION: float = 160e-6  # 160 μs
-CENTER_FREQ: float = 250e3  # 250 kHz
-
-# 频率轴 (用于 FFT 分析)
+# Derived frequency constants
 FREQ_RESOLUTION = SAMPLING_RATE / NUM_POINTS  # ~6.25 kHz per bin
 
 # 子频带边界 (Hz) — 对应超声检测常见频段
@@ -65,9 +45,6 @@ SUB_BANDS = [
 SUB_BAND_LABELS = ["0-100k", "100k-200k", "200k-400k", ">400k"]
 
 
-# ============================================================
-# 时域特征提取
-# ============================================================
 def _signal_arrival_time(sig: np.ndarray, threshold_ratio: float = 0.1) -> float:
     """
     基于阈值的信号到达时间检测.
@@ -127,9 +104,6 @@ def _extract_time_features(sig: np.ndarray) -> Dict[str, float]:
     }
 
 
-# ============================================================
-# 频谱特征提取
-# ============================================================
 def _compute_psd(sig: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
     使用 Welch 方法计算功率谱密度.
@@ -194,9 +168,6 @@ def _extract_freq_features(sig: np.ndarray) -> Dict[str, float]:
     }
 
 
-# ============================================================
-# 能量特征提取
-# ============================================================
 def _extract_energy_features(sig: np.ndarray) -> Dict[str, float]:
     """
     提取能量特征: 总能量 + 子频带能量.
@@ -233,9 +204,6 @@ def _extract_energy_features(sig: np.ndarray) -> Dict[str, float]:
     return features
 
 
-# ============================================================
-# 波数特征提取
-# ============================================================
 def _extract_wavenumber_features(sig: np.ndarray) -> Dict[str, float]:
     """
     提取波数相关特征.
@@ -306,9 +274,7 @@ def _extract_wavenumber_features(sig: np.ndarray) -> Dict[str, float]:
     }
 
 
-# ============================================================
 # 信号质量指标 (成对比较)
-# ============================================================
 def _cross_correlation_peak(sig_a: np.ndarray, sig_b: np.ndarray) -> Tuple[float, int]:
     """
     计算归一化互相关的峰值和时延.
@@ -374,9 +340,7 @@ def _envelope_correlation(sig_a: np.ndarray, sig_b: np.ndarray) -> float:
     return float(cov / std_prod)
 
 
-# ============================================================
 # 特征聚合
-# ============================================================
 def _extract_all_features(sig: np.ndarray) -> Dict[str, float]:
     """提取单个信号的全部声学特征."""
     features = {}
@@ -387,9 +351,7 @@ def _extract_all_features(sig: np.ndarray) -> Dict[str, float]:
     return features
 
 
-# ============================================================
 # 可视化
-# ============================================================
 def _plot_validation_figure(
     input_signals: np.ndarray,
     target_signals: np.ndarray,
@@ -770,7 +732,7 @@ def _plot_validation_figure(
     )
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
 
@@ -795,9 +757,7 @@ def _assess_lower(value: float, good_thresh: float, warn_thresh: float) -> str:
         return "POOR"
 
 
-# ============================================================
 # 文本报告
-# ============================================================
 def _print_report(quality_metrics: Dict) -> None:
     """打印简洁的验证结果文本报告."""
     avg = quality_metrics["averaged"]
@@ -871,14 +831,12 @@ def _print_report(quality_metrics: Dict) -> None:
     print("=" * 60 + "\n")
 
 
-# ============================================================
 # 主入口
-# ============================================================
 def run_acoustic_validation(
     model: nn.Module,
     dataloader: torch.utils.data.DataLoader,
     device: torch.device,
-    save_path: str = _image_path("fig_acoustic_validation.png"),
+    save_path: str = image_path("fig_acoustic_validation.png"),
     num_samples: int = 20,
 ) -> Dict:
     """
@@ -1053,9 +1011,7 @@ def run_acoustic_validation(
     }
 
 
-# ============================================================
 # 推理模式验证 (无 clean target, 只有 input vs denoised)
-# ============================================================
 def _plot_inference_validation_figure(
     input_signals: np.ndarray,
     denoised_signals: np.ndarray,
@@ -1345,7 +1301,7 @@ def _plot_inference_validation_figure(
     ax6.set_title("Panel 6: Summary Statistics", fontsize=12, fontweight="bold", pad=20)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
 
@@ -1412,7 +1368,7 @@ def _print_inference_report(quality_metrics: Dict) -> None:
 def run_inference_validation(
     input_signals: np.ndarray,
     denoised_signals: np.ndarray,
-    save_path: str = _image_path("fig_inference_acoustic_validation.png"),
+    save_path: str = image_path("fig_inference_acoustic_validation.png"),
     num_samples: int = 20,
 ) -> Dict:
     """
@@ -1542,9 +1498,7 @@ def run_inference_validation(
     }
 
 
-# ============================================================
 # Standalone 测试入口
-# ============================================================
 if __name__ == "__main__":
     """
     独立测试: 用未训练的模型 + 少量合成数据验证模块功能.
@@ -1566,7 +1520,7 @@ if __name__ == "__main__":
         model,
         val_loader,
         device,
-        save_path=_image_path("fig_acoustic_validation_test.png"),
+        save_path=image_path("fig_acoustic_validation_test.png"),
         num_samples=10,
     )
 

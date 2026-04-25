@@ -24,20 +24,7 @@ from typing import Tuple, List
 import torch
 
 from data import UltrasonicDataset
-
-
-RESULTS_DIR = Path("results")
-IMAGES_DIR = RESULTS_DIR / "images"
-
-
-def _image_path(filename: str) -> str:
-    """Build a default image output path under results/images."""
-    return str(IMAGES_DIR / filename)
-
-
-def _ensure_parent_dir(path: str) -> None:
-    """Create parent directory for an output file path if needed."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
+from scripts._shared import IMAGES_DIR, ensure_parent_dir, image_path
 
 
 def calculate_snr(signal: np.ndarray, noise: np.ndarray) -> float:
@@ -52,7 +39,7 @@ def calculate_snr(signal: np.ndarray, noise: np.ndarray) -> float:
 def plot_signal_samples(
     dataset: UltrasonicDataset,
     num_samples: int = 6,
-    save_path: str = _image_path("fig_pre_train_samples.png"),
+    save_path: str = image_path("fig_pre_train_samples.png"),
     show_plot: bool = True,
 ) -> None:
     """
@@ -113,7 +100,7 @@ def plot_signal_samples(
         ax_clean.set_ylim(-y_max, y_max)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     print(f"[INFO] Saved preview to {save_path}")
 
@@ -126,7 +113,7 @@ def plot_signal_samples(
 def plot_detailed_comparison(
     dataset: UltrasonicDataset,
     sample_idx: int = 0,
-    save_path: str = _image_path("fig_detailed_signal.png"),
+    save_path: str = image_path("fig_detailed_signal.png"),
     show_plot: bool = True,
 ) -> None:
     """
@@ -187,7 +174,7 @@ def plot_detailed_comparison(
     axes[3].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     print(f"[INFO] Saved detailed analysis to {save_path}")
 
@@ -201,7 +188,7 @@ def plot_noise_type_comparison(
     num_samples_per_type: int = 2,
     snr_db: float = -6.0,
     noise_intensity: float = 1.5,
-    save_path: str = _image_path("fig_noise_types.png"),
+    save_path: str = image_path("fig_noise_types.png"),
     show_plot: bool = True,
     seed: int = 42,
 ) -> None:
@@ -259,7 +246,7 @@ def plot_noise_type_comparison(
     axes[-1, 1].set_xlabel("Time (μs)")
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     print(f"[INFO] Saved noise comparison to {save_path}")
 
@@ -327,7 +314,7 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default=_image_path("fig_pre_train_samples.png"),
+        default=image_path("fig_pre_train_samples.png"),
         help="Output filename",
     )
     parser.add_argument(
@@ -381,7 +368,7 @@ def main():
         plot_detailed_comparison(
             dataset,
             sample_idx=0,
-            save_path=_image_path("fig_detailed_signal.png"),
+            save_path=image_path("fig_detailed_signal.png"),
             show_plot=not args.no_show,
         )
 
@@ -390,7 +377,7 @@ def main():
         plot_noise_type_comparison(
             snr_db=args.snr[0] if args.snr else -6.0,
             noise_intensity=args.noise_intensity,
-            save_path=_image_path("fig_noise_types.png"),
+            save_path=image_path("fig_noise_types.png"),
             show_plot=not args.no_show,
             seed=args.seed,
         )

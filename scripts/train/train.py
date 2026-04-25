@@ -18,18 +18,18 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from data import GRID_SPACING, create_dataloaders, create_deepsets_dataloaders
 from model.model import DeepCAE_PINN, DeepSetsPINN, DeepSetsPINN_TF, count_parameters
+from scripts._shared import (
+    RESULTS_DIR,
+    IMAGES_DIR,
+    CHECKPOINTS_DIR,
+    calculate_psnr,
+    calculate_snr,
+    ensure_parent_dir,
+    select_device,
+)
 from scripts.analysis import acoustic_validation as av
 from scripts.analysis.acoustic_validation import run_acoustic_validation
 from scripts.train.visualization import plot_results
-
-
-RESULTS_DIR = Path("results")
-IMAGES_DIR = RESULTS_DIR / "images"
-CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
-
-
-def _ensure_parent_dir(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_image_dir(checkpoint_dir: str) -> Path:
@@ -37,23 +37,6 @@ def _resolve_image_dir(checkpoint_dir: str) -> Path:
     if ckpt_path.name == "checkpoints":
         return ckpt_path.parent / "images"
     return RESULTS_DIR / "images"
-
-
-def calculate_psnr(
-    clean: torch.Tensor, denoised: torch.Tensor, max_val: float = 1.0
-) -> float:
-    mse = torch.mean((clean - denoised) ** 2).item()
-    if mse < 1e-10:
-        return float("inf")
-    return 10 * np.log10(max_val**2 / mse)
-
-
-def calculate_snr(signal: torch.Tensor, noise: torch.Tensor) -> float:
-    signal_power = torch.mean(signal**2).item()
-    noise_power = torch.mean(noise**2).item()
-    if noise_power < 1e-10:
-        return float("inf")
-    return 10 * np.log10(signal_power / noise_power)
 
 
 def plot_pre_training_samples(
@@ -92,7 +75,7 @@ def plot_pre_training_samples(
         axes[i, 1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"[INFO] Saved pre-training samples to {save_path}")
@@ -139,7 +122,7 @@ def plot_pre_training_samples_deepsets(
         axes[i, 1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"[INFO] Saved pre-training samples to {save_path}")
@@ -343,7 +326,7 @@ def plot_pinn_training_curves(history: Dict[str, list], save_path: str) -> None:
     axes[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"[INFO] Saved training curves to {save_path}")
@@ -431,7 +414,7 @@ def plot_deepsets_sample_results(
             ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"[INFO] Saved sample results to {save_path}")
@@ -582,16 +565,6 @@ def run_deepsets_acoustic_validation(
     return {"features": all_features, "quality_metrics": quality_metrics}
 
 
-def _select_device() -> torch.device:
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"[INFO] Using CUDA: {torch.cuda.get_device_name(0)}")
-        return device
-    if torch.backends.mps.is_available():
-        print("[INFO] Using Apple MPS (Metal Performance Shaders)")
-        return torch.device("mps")
-    print("[INFO] Using CPU")
-    return torch.device("cpu")
 
 
 def _load_checkpoint_for_resume(
@@ -641,7 +614,7 @@ def train_pinn(
 ) -> Tuple[nn.Module, Dict[str, list]]:
     torch.manual_seed(seed)
     np.random.seed(seed)
-    device = _select_device()
+    device = select_device()
 
     if data_mode == "file":
         print(f"\n[INFO] Loading experimental data from {data_path}...")
@@ -836,7 +809,7 @@ def train_deepsets_pinn(
 ) -> Tuple[nn.Module, Dict[str, list]]:
     torch.manual_seed(seed)
     np.random.seed(seed)
-    device = _select_device()
+    device = select_device()
 
     print(f"\n[INFO] Loading experimental data from {data_path}...")
     use_tf = model_type == "tf_fusion"

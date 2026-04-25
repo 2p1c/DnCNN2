@@ -38,6 +38,13 @@ from datetime import datetime
 from typing import Tuple, Optional
 
 from model.model import DeepCAE
+from scripts._shared import (
+    RESULTS_DIR,
+    IMAGES_DIR,
+    CHECKPOINTS_DIR,
+    ensure_parent_dir,
+    select_device,
+)
 from scripts.transformer import (
     load_mat_file,
     reshape_to_grid,
@@ -49,16 +56,7 @@ from scripts.transformer import (
 from scripts.analysis.acoustic_validation import run_inference_validation
 from scripts.train.visualization import plot_inference_comparison
 
-
-RESULTS_DIR = Path("results")
-IMAGES_DIR = RESULTS_DIR / "images"
-CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
 TRAIN_SIGNAL_LENGTH = 1000
-
-
-def _ensure_parent_dir(path: str) -> None:
-    """Create parent directory for an output file path if needed."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def _print_signal_stats(tag: str, signals: np.ndarray) -> None:
@@ -91,15 +89,9 @@ def load_model(
         Loaded model in eval mode
     """
     if device is None:
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-        elif torch.backends.mps.is_available():
-            device = torch.device("mps")
-        else:
-            device = torch.device("cpu")
+        device = select_device()
 
     # Load checkpoint
-    # Note: weights_only=False is needed for checkpoints saved with additional metadata
     # This is safe as long as the checkpoint comes from a trusted source
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
@@ -478,13 +470,7 @@ def run_inference(
     print("Ultrasonic Signal Denoising - Inference")
     print("=" * 60)
 
-    # Setup device
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
+    device = select_device()
 
     # Load model
     model = load_model(checkpoint_path, model_type, device)

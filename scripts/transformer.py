@@ -85,10 +85,6 @@ def reshape_to_grid(signal_data: np.ndarray, n_cols: int, n_rows: int) -> np.nda
         end_idx = (col + 1) * n_rows
         col_data = signal_data[start_idx:end_idx, :]
 
-        # Snake scan correction: flip even columns (uncomment if needed)
-        # if col % 2 == 1:
-        #     col_data = np.flipud(col_data)
-
         grid[col, :, :] = col_data
 
     return grid

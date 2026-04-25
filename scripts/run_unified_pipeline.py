@@ -413,8 +413,6 @@ def main() -> None:
     else:
         print("\n[STAGE 1/3] Data transform skipped")
 
-    ##############################
-
     if not args.skip_train:
         print("\n[STAGE 2/3] Model training")
         train_from_config(

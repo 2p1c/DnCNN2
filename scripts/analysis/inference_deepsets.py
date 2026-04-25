@@ -28,6 +28,7 @@ from typing import Tuple
 from model.model import DeepSetsPINN, DeepSetsPINN_TF
 from data import GRID_SPACING
 from data.tf_features import build_tf_features_from_processed_signals
+from scripts._shared import RESULTS_DIR, IMAGES_DIR, CHECKPOINTS_DIR, ensure_parent_dir, select_device
 from scripts.transformer import (
     load_mat_file,
     reshape_to_grid,
@@ -36,18 +37,11 @@ from scripts.transformer import (
     normalize_signal,
     truncate_signals,
 )
+from scripts.analysis.inference import reverse_interpolation, save_to_mat
 from scripts.analysis.acoustic_validation import run_inference_validation
 from scripts.train.visualization import plot_inference_comparison
 
 
-RESULTS_DIR = Path("results")
-IMAGES_DIR = RESULTS_DIR / "images"
-CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
-
-
-# ============================================================
-# Model Loading
-# ============================================================
 
 
 def load_model(
@@ -68,12 +62,7 @@ def load_model(
         (model, checkpoint_metadata)
     """
     if device is None:
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-        elif torch.backends.mps.is_available():
-            device = torch.device("mps")
-        else:
-            device = torch.device("cpu")
+        device = select_device()
 
     print(f"[INFO] Loading model from {checkpoint_path}")
     print(f"[INFO] Device: {device}")
@@ -130,9 +119,7 @@ def load_model(
     return model, ckpt
 
 
-# ============================================================
 # Preprocessing
-# ============================================================
 
 
 def preprocess_mat_data(
@@ -206,9 +193,7 @@ def preprocess_mat_data(
     return normalised, original, metadata
 
 
-# ============================================================
 # Grid Denoising
-# ============================================================
 
 
 def denoise_grid(
@@ -320,9 +305,6 @@ def denoise_grid(
     return denoised_sum.astype(np.float32)
 
 
-# ============================================================
-# Denormalisation
-# ============================================================
 
 
 def denormalize_signals(
@@ -344,9 +326,6 @@ def denormalize_signals(
     return denoised
 
 
-# ============================================================
-# Main Inference Pipeline
-# ============================================================
 
 
 def run_inference(
@@ -390,13 +369,7 @@ def run_inference(
     print("DeepSets PINN — Ultrasonic Signal Inference")
     print("=" * 60)
 
-    # Device
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
+    device = select_device()
 
     # Load model
     model, ckpt = load_model(
@@ -536,13 +509,9 @@ def run_inference(
 
     # Optionally reverse interpolation
     if metadata.get("interpolated", False):
-        from scripts.transformer import interpolate_spatial as interp_sp
-
-        grid_big = reshape_to_grid(denoised, target_cols, target_rows)
-        grid_small = interp_sp(
-            grid_big, grid_cols, grid_rows, method=interpolation_method
+        denoised_small = reverse_interpolation(
+            denoised, metadata, method=interpolation_method
         )
-        denoised_small = flatten_grid(grid_small)
 
         out_file_orig = out_dir / f"deepsets_denoised_{timestamp}_original.mat"
         sio.savemat(
@@ -566,9 +535,6 @@ def run_inference(
     return str(out_file)
 
 
-# ============================================================
-# CLI
-# ============================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

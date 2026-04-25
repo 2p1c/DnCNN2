@@ -9,28 +9,7 @@ import torch
 import torch.nn as nn
 
 
-def _ensure_parent_dir(path: str) -> None:
-    """Create parent directory for an output file path if needed."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-
-def _calculate_psnr(
-    clean: torch.Tensor, denoised: torch.Tensor, max_val: float = 1.0
-) -> float:
-    """Calculate PSNR in dB."""
-    mse = torch.mean((clean - denoised) ** 2).item()
-    if mse < 1e-10:
-        return float("inf")
-    return 10 * np.log10(max_val**2 / mse)
-
-
-def _calculate_snr(signal: torch.Tensor, noise: torch.Tensor) -> float:
-    """Calculate SNR in dB."""
-    signal_power = torch.mean(signal**2).item()
-    noise_power = torch.mean(noise**2).item()
-    if noise_power < 1e-10:
-        return float("inf")
-    return 10 * np.log10(signal_power / noise_power)
+from scripts._shared import calculate_psnr, calculate_snr, ensure_parent_dir
 
 
 def plot_results(
@@ -127,15 +106,15 @@ def plot_results(
         denoised_sig = denoised_np[col, 0]
         signals = [noisy_sig, clean_sig, denoised_sig]
 
-        psnr_clean = _calculate_psnr(
+        psnr_clean = calculate_psnr(
             torch.from_numpy(clean_np[col]), torch.from_numpy(denoised_np[col])
         )
-        psnr_noisy = _calculate_psnr(
+        psnr_noisy = calculate_psnr(
             torch.from_numpy(noisy_np[col]), torch.from_numpy(denoised_np[col])
         )
 
         noise = noisy_sig - clean_sig
-        input_snr = _calculate_snr(torch.from_numpy(clean_sig), torch.from_numpy(noise))
+        input_snr = calculate_snr(torch.from_numpy(clean_sig), torch.from_numpy(noise))
 
         for row in range(3):
             ax = axes[row, col] if num_samples > 1 else axes[row]
@@ -169,7 +148,7 @@ def plot_results(
             ax.axhline(y=0, color="k", linewidth=0.5, alpha=0.3)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"[INFO] Saved results to {save_path}")
@@ -272,7 +251,7 @@ def plot_inference_comparison(
         axes[1, col].axhline(y=0, color="k", linewidth=0.5, alpha=0.3)
 
     plt.tight_layout()
-    _ensure_parent_dir(save_path)
+    ensure_parent_dir(save_path)
     plt.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"[INFO] Saved inference comparison figure to {save_path}")
